@@ -34,6 +34,10 @@ class Settings(BaseSettings):
         default="https://api.kalshi.com/v1",
         description="Kalshi API base URL"
     )
+    kalshi_api_key: Optional[str] = Field(
+        default=None,
+        description="Kalshi API key for authentication"
+    )
     polymarket_gamma_api_base: str = Field(
         default="https://gamma-api.polymarket.com",
         description="Polymarket Gamma API base URL"
@@ -41,6 +45,10 @@ class Settings(BaseSettings):
     polymarket_clob_api_base: str = Field(
         default="https://clob.polymarket.com",
         description="Polymarket CLOB API base URL"
+    )
+    polymarket_api_key: Optional[str] = Field(
+        default=None,
+        description="Polymarket API key for authentication"
     )
 
     # ML Models

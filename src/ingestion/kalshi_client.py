@@ -16,16 +16,24 @@ logger = structlog.get_logger()
 class KalshiClient:
     """Client for Kalshi public market data API."""
 
-    def __init__(self, api_base: Optional[str] = None, timeout: int = 10):
+    def __init__(self, api_base: Optional[str] = None, api_key: Optional[str] = None, timeout: int = 10):
         """Initialize Kalshi client.
 
         Args:
             api_base: API base URL (default from settings)
+            api_key: API key for authentication (default from settings)
             timeout: Request timeout in seconds
         """
         self.api_base = api_base or settings.kalshi_api_base
+        self.api_key = api_key or settings.kalshi_api_key
         self.timeout = timeout
-        self.session = httpx.Client(timeout=timeout)
+
+        # Set up headers with API key if provided
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        self.session = httpx.Client(timeout=timeout, headers=headers)
 
     def _get(self, endpoint: str, params: Optional[Dict] = None) -> Dict[str, Any]:
         """Make GET request to Kalshi API.

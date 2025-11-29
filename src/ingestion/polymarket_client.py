@@ -17,16 +17,24 @@ logger = structlog.get_logger()
 class PolymarketGammaClient:
     """Client for Polymarket Gamma API (market discovery)."""
 
-    def __init__(self, api_base: Optional[str] = None, timeout: int = 10):
+    def __init__(self, api_base: Optional[str] = None, api_key: Optional[str] = None, timeout: int = 10):
         """Initialize Gamma client.
 
         Args:
             api_base: API base URL (default from settings)
+            api_key: API key for authentication (default from settings)
             timeout: Request timeout in seconds
         """
         self.api_base = api_base or settings.polymarket_gamma_api_base
+        self.api_key = api_key or settings.polymarket_api_key
         self.timeout = timeout
-        self.session = httpx.Client(timeout=timeout)
+
+        # Set up headers with API key if provided
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        self.session = httpx.Client(timeout=timeout, headers=headers)
 
     def _get(self, endpoint: str, params: Optional[Dict] = None) -> Any:
         """Make GET request to Gamma API.
@@ -278,16 +286,24 @@ class PolymarketGammaClient:
 class PolymarketCLOBClient:
     """Client for Polymarket CLOB API (prices and order books)."""
 
-    def __init__(self, api_base: Optional[str] = None, timeout: int = 10):
+    def __init__(self, api_base: Optional[str] = None, api_key: Optional[str] = None, timeout: int = 10):
         """Initialize CLOB client.
 
         Args:
             api_base: API base URL (default from settings)
+            api_key: API key for authentication (default from settings)
             timeout: Request timeout in seconds
         """
         self.api_base = api_base or settings.polymarket_clob_api_base
+        self.api_key = api_key or settings.polymarket_api_key
         self.timeout = timeout
-        self.session = httpx.Client(timeout=timeout)
+
+        # Set up headers with API key if provided
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        self.session = httpx.Client(timeout=timeout, headers=headers)
 
     def _get(self, endpoint: str, params: Optional[Dict] = None) -> Any:
         """Make GET request to CLOB API.
