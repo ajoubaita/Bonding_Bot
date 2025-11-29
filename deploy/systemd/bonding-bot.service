@@ -1,0 +1,32 @@
+[Unit]
+Description=Bonding Bot - Market Bonding Agent
+Documentation=https://github.com/ajoubaita/Bonding_Bot
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/bonding_bot/deploy
+User=root
+
+# Environment
+Environment="COMPOSE_PROJECT_NAME=bonding_bot"
+
+# Start services
+ExecStart=/usr/bin/docker-compose -f /opt/bonding_bot/deploy/docker-compose.production.yml up -d
+
+# Stop services
+ExecStop=/usr/bin/docker-compose -f /opt/bonding_bot/deploy/docker-compose.production.yml down
+
+# Restart policy
+Restart=on-failure
+RestartSec=10s
+
+# Timeout
+TimeoutStartSec=300
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,127 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: bonding_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bonding_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bonding_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-bonding_agent}
+    ports:
+      - "127.0.0.1:5432:5432"  # Only localhost access
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bonding_user} -d ${POSTGRES_DB:-bonding_agent}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bonding_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    container_name: bonding_redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"  # Only localhost access
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    networks:
+      - bonding_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: bonding_api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"  # Only localhost, Nginx will proxy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-bonding_user}:${POSTGRES_PASSWORD:-bonding_pass}@postgres:5432/${POSTGRES_DB:-bonding_agent}
+      - REDIS_URL=redis://redis:6379/0
+      - BONDING_API_KEY=${BONDING_API_KEY}
+      - KALSHI_API_BASE=${KALSHI_API_BASE:-https://api.kalshi.com/v1}
+      - POLYMARKET_GAMMA_API_BASE=${POLYMARKET_GAMMA_API_BASE:-https://gamma-api.polymarket.com}
+      - POLYMARKET_CLOB_API_BASE=${POLYMARKET_CLOB_API_BASE:-https://clob.polymarket.com}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - bonding_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  poller:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: bonding_poller
+    restart: unless-stopped
+    command: python3 scripts/run_poller.py
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-bonding_user}:${POSTGRES_PASSWORD:-bonding_pass}@postgres:5432/${POSTGRES_DB:-bonding_agent}
+      - REDIS_URL=redis://redis:6379/0
+      - KALSHI_POLL_INTERVAL_SEC=${KALSHI_POLL_INTERVAL_SEC:-60}
+      - POLYMARKET_POLL_INTERVAL_SEC=${POLYMARKET_POLL_INTERVAL_SEC:-60}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - bonding_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  bonding_network:
+    driver: bridge
