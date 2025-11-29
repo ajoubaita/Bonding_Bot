@@ -307,7 +307,26 @@ class PolymarketCLOBClient:
         try:
             response = self.session.get(url, params=params)
             response.raise_for_status()
-            return response.json()
+
+            # Debug: log response details
+            logger.debug(
+                "clob_api_response_received",
+                endpoint=endpoint,
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type"),
+                content_length=len(response.content) if response.content else 0,
+            )
+
+            json_data = response.json()
+
+            # Debug: log parsed JSON structure
+            logger.debug(
+                "clob_api_json_parsed",
+                endpoint=endpoint,
+                json_type=type(json_data).__name__,
+            )
+
+            return json_data
 
         except httpx.HTTPStatusError as e:
             logger.error(
@@ -323,6 +342,7 @@ class PolymarketCLOBClient:
                 "clob_request_failed",
                 endpoint=endpoint,
                 error=str(e),
+                error_type=type(e).__name__,
             )
             raise
 
