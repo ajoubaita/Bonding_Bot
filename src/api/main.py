@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import structlog
@@ -9,13 +10,16 @@ from src.api.middleware.auth import AuthMiddleware
 from src.api.routes import health, markets, pairs
 
 # Configure structured logging
+# Convert string log level to integer
+log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+
 structlog.configure(
     processors=[
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.add_log_level,
         structlog.processors.JSONRenderer() if settings.log_format == "json" else structlog.dev.ConsoleRenderer(),
     ],
-    wrapper_class=structlog.make_filtering_bound_logger(settings.log_level),
+    wrapper_class=structlog.make_filtering_bound_logger(log_level),
     context_class=dict,
     logger_factory=structlog.PrintLoggerFactory(),
     cache_logger_on_first_use=True,
