@@ -335,7 +335,38 @@ class PolymarketCLOBClient:
             List of markets with prices
         """
         logger.debug("clob_get_simplified_markets")
-        return self._get("/simplified-markets")
+        result = self._get("/simplified-markets")
+
+        # Debug: log response type and structure
+        logger.debug(
+            "clob_simplified_markets_response",
+            response_type=type(result).__name__,
+            is_list=isinstance(result, list),
+            is_dict=isinstance(result, dict),
+            length=len(result) if isinstance(result, (list, dict)) else None,
+            first_item_type=type(result[0]).__name__ if isinstance(result, list) and len(result) > 0 else None,
+        )
+
+        # Handle different response formats
+        if isinstance(result, list):
+            return result
+        elif isinstance(result, dict):
+            # Some APIs wrap the list in a dict with a "data" key
+            if "data" in result:
+                logger.warning("clob_simplified_markets_wrapped_in_data")
+                return result["data"]
+            else:
+                logger.error(
+                    "clob_simplified_markets_unexpected_dict",
+                    keys=list(result.keys())[:10],
+                )
+                return []
+        else:
+            logger.error(
+                "clob_simplified_markets_unexpected_type",
+                response_type=type(result).__name__,
+            )
+            return []
 
     def get_markets(
         self,
@@ -378,6 +409,16 @@ class PolymarketCLOBClient:
             condition_id = gamma_market.get("id")
 
             for clob_market in clob_markets:
+                # Ensure clob_market is a dictionary
+                if not isinstance(clob_market, dict):
+                    logger.warning(
+                        "clob_market_not_dict",
+                        condition_id=condition_id,
+                        market_type=type(clob_market).__name__,
+                        market_value=str(clob_market)[:100],
+                    )
+                    continue
+
                 if clob_market.get("condition_id") == condition_id:
                     # Extract prices from tokens
                     tokens = clob_market.get("tokens", [])
