@@ -387,11 +387,26 @@ class PolymarketCLOBClient:
                         for i, outcome in enumerate(gamma_market["outcomes"]):
                             if i < len(tokens):
                                 token = tokens[i]
-                                outcome["price"] = float(token.get("price", 0))
-                                outcome["outcome_label"] = token.get("outcome")
+                                # Ensure token is a dictionary before accessing fields
+                                if isinstance(token, dict):
+                                    outcome["price"] = float(token.get("price", 0))
+                                    outcome["outcome_label"] = token.get("outcome")
+                                else:
+                                    logger.warning(
+                                        "clob_token_not_dict",
+                                        condition_id=condition_id,
+                                        token_type=type(token).__name__,
+                                        token_value=str(token)[:50],
+                                    )
 
                     # Add accepting_orders flag
-                    gamma_market["metadata"]["accepting_orders"] = clob_market.get("accepting_orders", False)
+                    if isinstance(gamma_market.get("metadata"), dict):
+                        gamma_market["metadata"]["accepting_orders"] = clob_market.get("accepting_orders", False)
+                    else:
+                        # Initialize metadata if it's not a dict
+                        gamma_market["metadata"] = {
+                            "accepting_orders": clob_market.get("accepting_orders", False)
+                        }
 
                     logger.debug(
                         "clob_market_enriched",
