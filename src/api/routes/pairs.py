@@ -8,6 +8,11 @@ import structlog
 
 from src.models import get_db, Bond, Market
 from src.config import settings
+from src.utils.arbitrage import (
+    calculate_arbitrage_opportunity,
+    filter_by_minimum_volume,
+    get_market_volume,
+)
 
 logger = structlog.get_logger()
 
@@ -52,6 +57,19 @@ class TradingParams(BaseModel):
     max_position_pct: float
 
 
+class ArbitrageInfo(BaseModel):
+    """Arbitrage opportunity information."""
+    has_arbitrage: bool
+    arbitrage_type: Optional[str] = None
+    profit_per_dollar: float
+    kalshi_price: Optional[float] = None
+    polymarket_price: Optional[float] = None
+    min_volume: float
+    min_liquidity: float
+    max_position_size: float
+    explanation: str
+
+
 class BondRegistryEntry(BaseModel):
     """Single bond in registry."""
     pair_id: str
@@ -61,6 +79,7 @@ class BondRegistryEntry(BaseModel):
     p_match: float
     outcome_mapping: Dict[str, str]
     trading_params: TradingParams
+    arbitrage: Optional[ArbitrageInfo] = None
     created_at: str
 
 
@@ -207,6 +226,8 @@ async def get_bonded_pairs(
 async def get_bond_registry(
     tier: Optional[int] = Query(None, description="Filter by tier"),
     status_filter: str = Query("active", description="Filter by status"),
+    min_volume: float = Query(10000.0, description="Minimum trading volume (default $10k)"),
+    include_arbitrage: bool = Query(True, description="Include arbitrage analysis"),
     limit: int = Query(100, description="Page size"),
     offset: int = Query(0, description="Page offset"),
     db: Session = Depends(get_db)
@@ -216,6 +237,8 @@ async def get_bond_registry(
     Args:
         tier: Filter by tier (optional)
         status_filter: Filter by status (default: active)
+        min_volume: Minimum trading volume in dollars (default $10k)
+        include_arbitrage: Include arbitrage opportunity analysis
         limit: Page size
         offset: Page offset
         db: Database session
@@ -237,8 +260,28 @@ async def get_bond_registry(
     # Format response
     registry_entries = []
     for bond in bonds:
-        # Get polymarket condition_id
+        # Get both markets
+        kalshi_market = db.query(Market).filter(Market.id == bond.kalshi_market_id).first()
         poly_market = db.query(Market).filter(Market.id == bond.polymarket_market_id).first()
+
+        if not kalshi_market or not poly_market:
+            logger.warning("bond_missing_market", pair_id=bond.pair_id)
+            continue
+
+        # Filter by minimum volume
+        kalshi_volume = get_market_volume(kalshi_market)
+        poly_volume = get_market_volume(poly_market)
+        min_vol = min(kalshi_volume, poly_volume)
+
+        if min_vol < min_volume:
+            logger.debug(
+                "bond_filtered_low_volume",
+                pair_id=bond.pair_id,
+                min_volume_found=min_vol,
+                min_required=min_volume,
+            )
+            continue
+
         poly_condition_id = poly_market.condition_id if poly_market else None
 
         # Calculate trading params based on tier
@@ -252,6 +295,16 @@ async def get_bond_registry(
             max_notional = 0
             max_position_pct = 0
 
+        # Calculate arbitrage opportunity if requested
+        arbitrage_info = None
+        if include_arbitrage:
+            arb_result = calculate_arbitrage_opportunity(
+                kalshi_market,
+                poly_market,
+                bond.outcome_mapping
+            )
+            arbitrage_info = ArbitrageInfo(**arb_result)
+
         registry_entries.append(BondRegistryEntry(
             pair_id=bond.pair_id,
             kalshi_market_id=bond.kalshi_market_id,
@@ -263,6 +316,7 @@ async def get_bond_registry(
                 max_notional=max_notional,
                 max_position_pct=max_position_pct,
             ),
+            arbitrage=arbitrage_info,
             created_at=bond.created_at.isoformat(),
         ))
 

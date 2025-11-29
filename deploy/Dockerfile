@@ -19,8 +19,8 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download spaCy model
-RUN python3 -m spacy download en_core_web_sm
+# Download spaCy model (install via pip for better Docker caching)
+RUN pip install --no-cache-dir https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 
 # Copy application code
 COPY . .
