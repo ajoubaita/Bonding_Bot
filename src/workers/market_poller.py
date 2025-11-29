@@ -59,7 +59,7 @@ class MarketPoller:
                 existing.resolution_source = normalized["resolution_source"]
                 existing.outcome_schema = normalized["outcome_schema"]
                 existing.text_embedding = normalized["text_embedding"]
-                existing.metadata = normalized["metadata"]
+                existing.market_metadata = normalized["metadata"]
                 existing.updated_at = datetime.utcnow()
 
                 logger.debug("market_updated", platform=platform, market_id=market_id)
@@ -82,7 +82,7 @@ class MarketPoller:
                     resolution_source=normalized["resolution_source"],
                     outcome_schema=normalized["outcome_schema"],
                     text_embedding=normalized["text_embedding"],
-                    metadata=normalized["metadata"],
+                    market_metadata=normalized["metadata"],
                     created_at=datetime.utcnow(),
                     updated_at=datetime.utcnow(),
                 )

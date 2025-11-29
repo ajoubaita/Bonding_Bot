@@ -59,8 +59,8 @@ class Market(Base):
     # Text embedding (384-dimensional vector from all-MiniLM-L6-v2)
     text_embedding = Column(Vector(384), nullable=True)
 
-    # Metadata (JSONB)
-    metadata = Column(JSONB, nullable=True)
+    # Market metadata (JSONB) - renamed from 'metadata' to avoid SQLAlchemy conflict
+    market_metadata = Column(JSONB, nullable=True)
     # Format: {"created_at": ISO8601, "last_updated": ISO8601, "ingestion_version": "v1.0.0", "liquidity": float, "volume": float}
 
     # Timestamps
@@ -95,7 +95,7 @@ class Market(Base):
             "time_window": self.time_window,
             "resolution_source": self.resolution_source,
             "outcome_schema": self.outcome_schema,
-            "metadata": self.metadata,
+            "market_metadata": self.market_metadata,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

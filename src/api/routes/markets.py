@@ -153,7 +153,7 @@ async def ingest_markets(
                         "type": market_data.outcome_type,
                         "outcomes": [o.dict() for o in market_data.outcomes],
                     },
-                    metadata={
+                    market_metadata={
                         "ingestion_version": "v1.0.0",
                         "liquidity": market_data.metadata.liquidity if market_data.metadata else None,
                         "volume": market_data.metadata.volume if market_data.metadata else None,

@@ -10,33 +10,33 @@ def get_market_price(market: Any, side: str = "mid") -> Optional[float]:
     """Extract price from market metadata.
 
     Args:
-        market: Market object with metadata
+        market: Market object with market_metadata
         side: "bid", "ask", or "mid" (default)
 
     Returns:
         Price as float [0, 1], or None if not available
     """
-    if not market.metadata:
+    if not market.market_metadata:
         return None
 
     # Try different price fields
     if side == "mid":
         # Try mid price first
-        if "mid_price" in market.metadata:
-            return market.metadata["mid_price"]
+        if "mid_price" in market.market_metadata:
+            return market.market_metadata["mid_price"]
         # Fall back to average of bid/ask
-        bid = market.metadata.get("bid_price")
-        ask = market.metadata.get("ask_price")
+        bid = market.market_metadata.get("bid_price")
+        ask = market.market_metadata.get("ask_price")
         if bid is not None and ask is not None:
             return (bid + ask) / 2
         # Fall back to last price
-        return market.metadata.get("last_price")
+        return market.market_metadata.get("last_price")
 
     elif side == "bid":
-        return market.metadata.get("bid_price")
+        return market.market_metadata.get("bid_price")
 
     elif side == "ask":
-        return market.metadata.get("ask_price")
+        return market.market_metadata.get("ask_price")
 
     return None
 
@@ -45,15 +45,15 @@ def get_market_volume(market: Any) -> float:
     """Extract trading volume from market metadata.
 
     Args:
-        market: Market object with metadata
+        market: Market object with market_metadata
 
     Returns:
         Volume in dollars (or 0 if not available)
     """
-    if not market.metadata:
+    if not market.market_metadata:
         return 0.0
 
-    volume = market.metadata.get("volume", 0.0)
+    volume = market.market_metadata.get("volume", 0.0)
     return float(volume) if volume else 0.0
 
 
@@ -61,15 +61,15 @@ def get_market_liquidity(market: Any) -> float:
     """Extract liquidity from market metadata.
 
     Args:
-        market: Market object with metadata
+        market: Market object with market_metadata
 
     Returns:
         Liquidity in dollars (or 0 if not available)
     """
-    if not market.metadata:
+    if not market.market_metadata:
         return 0.0
 
-    liquidity = market.metadata.get("liquidity", 0.0)
+    liquidity = market.market_metadata.get("liquidity", 0.0)
     return float(liquidity) if liquidity else 0.0
 
 
