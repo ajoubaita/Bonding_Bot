@@ -273,11 +273,15 @@ class KalshiClient:
 
         return normalized
 
-    def fetch_all_active_markets(self) -> List[Dict[str, Any]]:
-        """Fetch all active markets with pagination.
+    def fetch_all_active_markets(self, batch_callback=None) -> List[Dict[str, Any]]:
+        """Fetch all active markets with pagination and optional batch processing.
+
+        Args:
+            batch_callback: Optional function to call with each batch of normalized markets
+                           for incremental processing (e.g., parallel ingestion)
 
         Returns:
-            List of normalized markets
+            List of all normalized markets
         """
         logger.info("kalshi_fetch_all_active_markets_start")
 
@@ -298,17 +302,36 @@ class KalshiClient:
                 if not markets:
                     break
 
-                # Normalize each market
+                # Normalize each market in this batch
+                batch_normalized = []
                 for market in markets:
                     try:
                         normalized = self.normalize_market(market)
-                        all_markets.append(normalized)
+                        batch_normalized.append(normalized)
                     except Exception as e:
                         logger.error(
                             "kalshi_market_normalization_failed",
                             ticker=market.get("ticker"),
                             error=str(e),
                         )
+
+                # Process batch immediately if callback provided
+                if batch_callback and batch_normalized:
+                    try:
+                        batch_callback(batch_normalized, "kalshi")
+                        logger.debug(
+                            "kalshi_batch_callback_executed",
+                            page=page,
+                            batch_size=len(batch_normalized),
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "kalshi_batch_callback_failed",
+                            page=page,
+                            error=str(e),
+                        )
+
+                all_markets.extend(batch_normalized)
 
                 logger.info(
                     "kalshi_markets_page_fetched",

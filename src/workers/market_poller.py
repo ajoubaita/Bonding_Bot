@@ -249,54 +249,74 @@ class MarketPoller:
         return success_count
 
     def poll_kalshi(self) -> int:
-        """Poll Kalshi for new markets.
+        """Poll Kalshi for new markets with batch processing.
 
         Returns:
             Number of markets ingested
         """
         logger.info("poll_kalshi_start")
 
+        total_ingested = 0
+
+        def batch_callback(markets_batch, platform):
+            """Process each batch as it's fetched."""
+            nonlocal total_ingested
+            ingested = self.ingest_markets_parallel(markets_batch, platform)
+            total_ingested += ingested
+
         try:
-            # Fetch all active markets
-            markets = self.kalshi_client.fetch_all_active_markets()
+            # Fetch all active markets with batch processing callback
+            # Markets are ingested immediately as each page is fetched
+            markets = self.kalshi_client.fetch_all_active_markets(
+                batch_callback=batch_callback
+            )
 
-            logger.info("poll_kalshi_fetched", count=len(markets))
+            logger.info(
+                "poll_kalshi_complete",
+                total_fetched=len(markets),
+                total_ingested=total_ingested,
+            )
 
-            # Ingest markets in parallel
-            ingested = self.ingest_markets_parallel(markets, "kalshi")
-
-            logger.info("poll_kalshi_complete", total=len(markets), ingested=ingested)
-
-            return ingested
+            return total_ingested
 
         except Exception as e:
             logger.error("poll_kalshi_failed", error=str(e))
-            return 0
+            return total_ingested  # Return what was ingested before error
 
     def poll_polymarket(self) -> int:
-        """Poll Polymarket for new markets.
+        """Poll Polymarket for new markets with batch processing.
 
         Returns:
             Number of markets ingested
         """
         logger.info("poll_polymarket_start")
 
+        total_ingested = 0
+
+        def batch_callback(markets_batch, platform):
+            """Process each batch as it's fetched."""
+            nonlocal total_ingested
+            ingested = self.ingest_markets_parallel(markets_batch, platform)
+            total_ingested += ingested
+
         try:
-            # Fetch all active markets with prices
-            markets = self.poly_client.fetch_all_active_markets_with_prices()
+            # Fetch all active markets with batch processing callback
+            # Markets are ingested immediately as each page is fetched
+            markets = self.poly_client.fetch_all_active_markets_with_prices(
+                batch_callback=batch_callback
+            )
 
-            logger.info("poll_polymarket_fetched", count=len(markets))
+            logger.info(
+                "poll_polymarket_complete",
+                total_fetched=len(markets),
+                total_ingested=total_ingested,
+            )
 
-            # Ingest markets in parallel
-            ingested = self.ingest_markets_parallel(markets, "polymarket")
-
-            logger.info("poll_polymarket_complete", total=len(markets), ingested=ingested)
-
-            return ingested
+            return total_ingested
 
         except Exception as e:
             logger.error("poll_polymarket_failed", error=str(e))
-            return 0
+            return total_ingested  # Return what was ingested before error
 
     def poll_once(self) -> Dict[str, int]:
         """Poll both platforms once.

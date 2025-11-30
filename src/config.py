@@ -31,8 +31,8 @@ class Settings(BaseSettings):
 
     # External API Endpoints
     kalshi_api_base: str = Field(
-        default="https://api.kalshi.com/v1",
-        description="Kalshi API base URL"
+        default="https://api.elections.kalshi.com/trade-api/v2",
+        description="Kalshi API base URL (v2)"
     )
     kalshi_api_key: Optional[str] = Field(
         default=None,

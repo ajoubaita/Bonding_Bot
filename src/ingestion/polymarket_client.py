@@ -208,11 +208,15 @@ class PolymarketGammaClient:
 
         return normalized
 
-    def fetch_all_active_markets(self) -> List[Dict[str, Any]]:
-        """Fetch all active markets with pagination.
+    def fetch_all_active_markets(self, batch_callback=None) -> List[Dict[str, Any]]:
+        """Fetch all active markets with pagination and optional batch processing.
+
+        Args:
+            batch_callback: Optional function to call with each batch of normalized markets
+                           for incremental processing (e.g., parallel ingestion)
 
         Returns:
-            List of normalized markets
+            List of all normalized markets
         """
         logger.info("gamma_fetch_all_active_markets_start")
 
@@ -231,17 +235,36 @@ class PolymarketGammaClient:
                 if not markets:
                     break
 
-                # Normalize each market
+                # Normalize each market in this batch
+                batch_normalized = []
                 for market in markets:
                     try:
                         normalized = self.normalize_market(market)
-                        all_markets.append(normalized)
+                        batch_normalized.append(normalized)
                     except Exception as e:
                         logger.error(
                             "gamma_market_normalization_failed",
                             condition_id=market.get("conditionId"),
                             error=str(e),
                         )
+
+                # Process batch immediately if callback provided
+                if batch_callback and batch_normalized:
+                    try:
+                        batch_callback(batch_normalized, "polymarket")
+                        logger.debug(
+                            "gamma_batch_callback_executed",
+                            offset=offset,
+                            batch_size=len(batch_normalized),
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "gamma_batch_callback_failed",
+                            offset=offset,
+                            error=str(e),
+                        )
+
+                all_markets.extend(batch_normalized)
 
                 logger.info(
                     "gamma_markets_batch_fetched",
@@ -534,38 +557,68 @@ class PolymarketClient:
         self.gamma = PolymarketGammaClient(gamma_api_base, timeout)
         self.clob = PolymarketCLOBClient(clob_api_base, timeout)
 
-    def fetch_all_active_markets_with_prices(self) -> List[Dict[str, Any]]:
-        """Fetch all active markets with current prices.
+    def fetch_all_active_markets_with_prices(self, batch_callback=None) -> List[Dict[str, Any]]:
+        """Fetch all active markets with current prices and optional batch processing.
+
+        Args:
+            batch_callback: Optional function to call with each batch of enriched markets
+                           for incremental processing (e.g., parallel ingestion)
 
         Returns:
-            List of normalized markets with prices
+            List of all normalized markets with prices
         """
         logger.info("polymarket_fetch_all_active_markets_with_prices_start")
 
-        # Fetch markets from Gamma
-        markets = self.gamma.fetch_all_active_markets()
+        all_enriched_markets = []
 
-        # Enrich with CLOB prices
-        enriched_markets = []
-        for market in markets:
-            try:
-                enriched = self.clob.enrich_market_with_prices(market)
-                enriched_markets.append(enriched)
-            except Exception as e:
-                logger.error(
-                    "polymarket_enrich_failed",
-                    market_id=market.get("id"),
-                    error=str(e),
-                )
-                # Include market without prices
-                enriched_markets.append(market)
+        def gamma_batch_callback(markets_batch, platform):
+            """Enrich batch with prices and forward to main callback."""
+            enriched_batch = []
+            for market in markets_batch:
+                try:
+                    enriched = self.clob.enrich_market_with_prices(market)
+                    enriched_batch.append(enriched)
+                except Exception as e:
+                    logger.error(
+                        "polymarket_enrich_failed",
+                        market_id=market.get("id"),
+                        error=str(e),
+                    )
+                    # Include market without prices
+                    enriched_batch.append(market)
+
+            all_enriched_markets.extend(enriched_batch)
+
+            # Forward enriched batch to main callback if provided
+            if batch_callback:
+                batch_callback(enriched_batch, platform)
+
+        # Fetch markets from Gamma with batch processing
+        markets = self.gamma.fetch_all_active_markets(
+            batch_callback=gamma_batch_callback if batch_callback else None
+        )
+
+        # If no callback was provided, enrich all markets now
+        if not batch_callback:
+            for market in markets:
+                try:
+                    enriched = self.clob.enrich_market_with_prices(market)
+                    all_enriched_markets.append(enriched)
+                except Exception as e:
+                    logger.error(
+                        "polymarket_enrich_failed",
+                        market_id=market.get("id"),
+                        error=str(e),
+                    )
+                    # Include market without prices
+                    all_enriched_markets.append(market)
 
         logger.info(
             "polymarket_fetch_all_active_markets_with_prices_complete",
-            total_markets=len(enriched_markets),
+            total_markets=len(all_enriched_markets),
         )
 
-        return enriched_markets
+        return all_enriched_markets
 
     def close(self):
         """Close HTTP sessions."""
