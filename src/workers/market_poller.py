@@ -1,7 +1,8 @@
 """Market polling service for automatic ingestion."""
 
 import time
-from typing import List, Dict, Any
+import multiprocessing as mp
+from typing import List, Dict, Any, Tuple
 from datetime import datetime
 from sqlalchemy.orm import Session
 import structlog
@@ -16,17 +17,108 @@ from src.utils.metrics import record_market_ingestion
 logger = structlog.get_logger()
 
 
+def process_market_worker(args: Tuple[Dict[str, Any], str]) -> Tuple[bool, str, str]:
+    """Worker function to process a single market in parallel.
+
+    Args:
+        args: Tuple of (raw_market, platform)
+
+    Returns:
+        Tuple of (success, platform, market_id)
+    """
+    raw_market, platform = args
+
+    try:
+        # Normalize market (CPU-intensive part)
+        normalized = normalize_market(raw_market, platform)
+        market_id = normalized["id"]
+
+        # Get database session for this worker
+        db = next(get_db())
+
+        try:
+            # Check if market exists
+            existing = db.query(Market).filter(Market.id == market_id).first()
+
+            if existing:
+                # Update existing market
+                existing.raw_title = normalized["raw_title"]
+                existing.raw_description = normalized["raw_description"]
+                existing.clean_title = normalized["clean_title"]
+                existing.clean_description = normalized["clean_description"]
+                existing.category = normalized["category"]
+                existing.event_type = normalized["event_type"]
+                existing.entities = normalized["entities"]
+                existing.geo_scope = normalized["geo_scope"]
+                existing.time_window = normalized["time_window"]
+                existing.resolution_source = normalized["resolution_source"]
+                existing.outcome_schema = normalized["outcome_schema"]
+                existing.text_embedding = normalized["text_embedding"]
+                existing.market_metadata = normalized["metadata"]
+                existing.updated_at = datetime.utcnow()
+
+                logger.debug("market_updated", platform=platform, market_id=market_id)
+            else:
+                # Create new market
+                new_market = Market(
+                    id=normalized["id"],
+                    platform=normalized["platform"],
+                    condition_id=normalized["condition_id"],
+                    status=normalized["status"],
+                    raw_title=normalized["raw_title"],
+                    raw_description=normalized["raw_description"],
+                    clean_title=normalized["clean_title"],
+                    clean_description=normalized["clean_description"],
+                    category=normalized["category"],
+                    event_type=normalized["event_type"],
+                    entities=normalized["entities"],
+                    geo_scope=normalized["geo_scope"],
+                    time_window=normalized["time_window"],
+                    resolution_source=normalized["resolution_source"],
+                    outcome_schema=normalized["outcome_schema"],
+                    text_embedding=normalized["text_embedding"],
+                    market_metadata=normalized["metadata"],
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow(),
+                )
+
+                db.add(new_market)
+                logger.debug("market_created", platform=platform, market_id=market_id)
+
+            db.commit()
+            return (True, platform, market_id)
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        logger.error(
+            "process_market_worker_failed",
+            platform=platform,
+            market_id=raw_market.get("id", "unknown"),
+            error=str(e),
+        )
+        return (False, platform, raw_market.get("id", "unknown"))
+
+
 class MarketPoller:
     """Poll external APIs and ingest markets."""
 
-    def __init__(self):
-        """Initialize market poller."""
+    def __init__(self, num_workers: int = None):
+        """Initialize market poller.
+
+        Args:
+            num_workers: Number of parallel workers (default: CPU count)
+        """
         self.kalshi_client = KalshiClient()
         self.poly_client = PolymarketClient()
         self.running = False
+        self.num_workers = num_workers or mp.cpu_count()
+
+        logger.info("market_poller_initialized", num_workers=self.num_workers)
 
     def ingest_market(self, raw_market: Dict[str, Any], platform: str, db: Session) -> bool:
-        """Ingest a single market.
+        """Ingest a single market (legacy serial method).
 
         Args:
             raw_market: Raw market data from API
@@ -105,6 +197,57 @@ class MarketPoller:
             record_market_ingestion(platform, success=False)
             return False
 
+    def ingest_markets_parallel(self, markets: List[Dict[str, Any]], platform: str) -> int:
+        """Ingest multiple markets in parallel.
+
+        Args:
+            markets: List of raw market data
+            platform: Platform name
+
+        Returns:
+            Number of successfully ingested markets
+        """
+        if not markets:
+            return 0
+
+        logger.info(
+            "ingest_markets_parallel_start",
+            platform=platform,
+            total_markets=len(markets),
+            num_workers=self.num_workers,
+        )
+
+        start_time = time.time()
+
+        # Prepare arguments for workers
+        worker_args = [(market, platform) for market in markets]
+
+        # Process markets in parallel
+        with mp.Pool(processes=self.num_workers) as pool:
+            results = pool.map(process_market_worker, worker_args)
+
+        # Count successes and record metrics
+        success_count = sum(1 for success, _, _ in results if success)
+        fail_count = len(results) - success_count
+
+        # Record metrics
+        for success, plat, market_id in results:
+            record_market_ingestion(plat, success=success)
+
+        duration = time.time() - start_time
+
+        logger.info(
+            "ingest_markets_parallel_complete",
+            platform=platform,
+            total=len(markets),
+            success=success_count,
+            failed=fail_count,
+            duration_seconds=round(duration, 2),
+            markets_per_second=round(len(markets) / duration, 2) if duration > 0 else 0,
+        )
+
+        return success_count
+
     def poll_kalshi(self) -> int:
         """Poll Kalshi for new markets.
 
@@ -119,21 +262,12 @@ class MarketPoller:
 
             logger.info("poll_kalshi_fetched", count=len(markets))
 
-            # Ingest each market
-            db = next(get_db())
-            ingested = 0
+            # Ingest markets in parallel
+            ingested = self.ingest_markets_parallel(markets, "kalshi")
 
-            try:
-                for market in markets:
-                    if self.ingest_market(market, "kalshi", db):
-                        ingested += 1
+            logger.info("poll_kalshi_complete", total=len(markets), ingested=ingested)
 
-                logger.info("poll_kalshi_complete", total=len(markets), ingested=ingested)
-
-                return ingested
-
-            finally:
-                db.close()
+            return ingested
 
         except Exception as e:
             logger.error("poll_kalshi_failed", error=str(e))
@@ -153,21 +287,12 @@ class MarketPoller:
 
             logger.info("poll_polymarket_fetched", count=len(markets))
 
-            # Ingest each market
-            db = next(get_db())
-            ingested = 0
+            # Ingest markets in parallel
+            ingested = self.ingest_markets_parallel(markets, "polymarket")
 
-            try:
-                for market in markets:
-                    if self.ingest_market(market, "polymarket", db):
-                        ingested += 1
+            logger.info("poll_polymarket_complete", total=len(markets), ingested=ingested)
 
-                logger.info("poll_polymarket_complete", total=len(markets), ingested=ingested)
-
-                return ingested
-
-            finally:
-                db.close()
+            return ingested
 
         except Exception as e:
             logger.error("poll_polymarket_failed", error=str(e))
