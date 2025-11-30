@@ -61,7 +61,7 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-bonding_user}:${POSTGRES_PASSWORD:-bonding_pass}@postgres:5432/${POSTGRES_DB:-bonding_agent}
       - REDIS_URL=redis://redis:6379/0
       - BONDING_API_KEY=${BONDING_API_KEY}
-      - KALSHI_API_BASE=${KALSHI_API_BASE:-https://api.kalshi.com/v1}
+      - KALSHI_API_BASE=${KALSHI_API_BASE:-https://api.elections.kalshi.com/trade-api/v2}
       - KALSHI_API_KEY=${KALSHI_API_KEY}
       - POLYMARKET_GAMMA_API_BASE=${POLYMARKET_GAMMA_API_BASE:-https://gamma-api.polymarket.com}
       - POLYMARKET_CLOB_API_BASE=${POLYMARKET_CLOB_API_BASE:-https://clob.polymarket.com}
@@ -99,7 +99,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-bonding_user}:${POSTGRES_PASSWORD:-bonding_pass}@postgres:5432/${POSTGRES_DB:-bonding_agent}
       - REDIS_URL=redis://redis:6379/0
-      - KALSHI_API_BASE=${KALSHI_API_BASE:-https://api.kalshi.com/v1}
+      - KALSHI_API_BASE=${KALSHI_API_BASE:-https://api.elections.kalshi.com/trade-api/v2}
       - KALSHI_API_KEY=${KALSHI_API_KEY}
       - POLYMARKET_GAMMA_API_BASE=${POLYMARKET_GAMMA_API_BASE:-https://gamma-api.polymarket.com}
       - POLYMARKET_CLOB_API_BASE=${POLYMARKET_CLOB_API_BASE:-https://clob.polymarket.com}
