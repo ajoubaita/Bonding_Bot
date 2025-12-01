@@ -89,6 +89,47 @@ class CandidatesResponse(BaseModel):
     total_candidates: int
 
 
+class ArbitrageOpportunityResponse(BaseModel):
+    """Arbitrage opportunity response."""
+    # Market identifiers
+    kalshi_market_id: str
+    polymarket_market_id: str
+    kalshi_title: str
+    polymarket_title: str
+
+    # Opportunity type
+    opportunity_type: str  # "direct_spread", "hedged_position", "none"
+
+    # Prices
+    kalshi_yes_price: float
+    kalshi_no_price: float
+    polymarket_yes_price: float
+    polymarket_no_price: float
+
+    # Arbitrage metrics
+    spread_yes: float
+    spread_no: float
+    hedged_sum_k_yes_p_no: float
+    hedged_sum_k_no_p_yes: float
+
+    # Profit calculation
+    best_strategy: str
+    gross_profit: float
+    estimated_fees: float
+    net_profit: float
+    roi_percent: float
+
+    # Risk metrics
+    liquidity_score: float
+    volume_score: float
+    confidence_score: float
+
+    # Additional context
+    min_liquidity: float
+    min_volume: float
+    warnings: List[str]
+
+
 @router.post("/ingest", response_model=BatchIngestResponse)
 async def ingest_markets(
     request: BatchIngestRequest,
@@ -375,3 +416,127 @@ async def get_candidates(
         candidates=candidates,
         total_candidates=len(candidates),
     )
+
+
+@router.get("/arbitrage/{kalshi_id}/{polymarket_id}", response_model=ArbitrageOpportunityResponse)
+async def calculate_arbitrage_opportunity(
+    kalshi_id: str,
+    polymarket_id: str,
+    fee_rate: float = 0.05,
+    db: Session = Depends(get_db)
+):
+    """Calculate arbitrage opportunity between Kalshi and Polymarket markets.
+
+    Args:
+        kalshi_id: Kalshi market ID
+        polymarket_id: Polymarket market ID
+        fee_rate: Total estimated fee rate (default 5%)
+        db: Database session
+
+    Returns:
+        ArbitrageOpportunityResponse with detailed arbitrage metrics
+    """
+    from src.arbitrage import calculate_arbitrage
+
+    logger.info(
+        "calculate_arbitrage_opportunity_start",
+        kalshi_id=kalshi_id,
+        polymarket_id=polymarket_id,
+        fee_rate=fee_rate,
+    )
+
+    # Get Kalshi market
+    kalshi_market = db.query(Market).filter(
+        Market.id == kalshi_id,
+        Market.platform == "kalshi"
+    ).first()
+
+    if not kalshi_market:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": {
+                    "code": "MARKET_NOT_FOUND",
+                    "message": f"Kalshi market {kalshi_id} not found",
+                }
+            },
+        )
+
+    # Get Polymarket market
+    polymarket_market = db.query(Market).filter(
+        Market.id == polymarket_id,
+        Market.platform == "polymarket"
+    ).first()
+
+    if not polymarket_market:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": {
+                    "code": "MARKET_NOT_FOUND",
+                    "message": f"Polymarket market {polymarket_id} not found",
+                }
+            },
+        )
+
+    # Calculate arbitrage opportunity
+    try:
+        opportunity = calculate_arbitrage(
+            market_k=kalshi_market,
+            market_p=polymarket_market,
+            fee_rate=fee_rate,
+        )
+
+        logger.info(
+            "calculate_arbitrage_opportunity_complete",
+            kalshi_id=kalshi_id,
+            polymarket_id=polymarket_id,
+            opportunity_type=opportunity.opportunity_type,
+            net_profit=opportunity.net_profit,
+            roi_percent=opportunity.roi_percent,
+        )
+
+        # Convert dataclass to response model
+        return ArbitrageOpportunityResponse(
+            kalshi_market_id=opportunity.kalshi_market_id,
+            polymarket_market_id=opportunity.polymarket_market_id,
+            kalshi_title=opportunity.kalshi_title,
+            polymarket_title=opportunity.polymarket_title,
+            opportunity_type=opportunity.opportunity_type,
+            kalshi_yes_price=opportunity.kalshi_yes_price,
+            kalshi_no_price=opportunity.kalshi_no_price,
+            polymarket_yes_price=opportunity.polymarket_yes_price,
+            polymarket_no_price=opportunity.polymarket_no_price,
+            spread_yes=opportunity.spread_yes,
+            spread_no=opportunity.spread_no,
+            hedged_sum_k_yes_p_no=opportunity.hedged_sum_k_yes_p_no,
+            hedged_sum_k_no_p_yes=opportunity.hedged_sum_k_no_p_yes,
+            best_strategy=opportunity.best_strategy,
+            gross_profit=opportunity.gross_profit,
+            estimated_fees=opportunity.estimated_fees,
+            net_profit=opportunity.net_profit,
+            roi_percent=opportunity.roi_percent,
+            liquidity_score=opportunity.liquidity_score,
+            volume_score=opportunity.volume_score,
+            confidence_score=opportunity.confidence_score,
+            min_liquidity=opportunity.min_liquidity,
+            min_volume=opportunity.min_volume,
+            warnings=opportunity.warnings,
+        )
+
+    except Exception as e:
+        logger.error(
+            "calculate_arbitrage_opportunity_failed",
+            kalshi_id=kalshi_id,
+            polymarket_id=polymarket_id,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": {
+                    "code": "CALCULATION_FAILED",
+                    "message": f"Failed to calculate arbitrage: {str(e)}",
+                }
+            },
+        )
