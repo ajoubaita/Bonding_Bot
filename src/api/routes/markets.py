@@ -217,6 +217,10 @@ async def get_candidates(
     Returns:
         CandidatesResponse with candidate markets
     """
+    from src.similarity.calculator import calculate_similarity
+    from src.similarity.tier_assigner import assign_tier
+    from sqlalchemy import text
+
     # Validate platform
     if platform not in ["kalshi", "polymarket"]:
         raise HTTPException(
@@ -242,18 +246,132 @@ async def get_candidates(
             },
         )
 
-    # TODO: Implement candidate generation logic
-    # For now, return empty list
+    # Check if source market has embedding
+    if source_market.text_embedding is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": {
+                    "code": "MISSING_EMBEDDING",
+                    "message": f"Market {market_id} has no text embedding",
+                }
+            },
+        )
+
     logger.info(
-        "get_candidates",
+        "get_candidates_start",
         platform=platform,
         market_id=market_id,
         limit=limit,
     )
 
+    # Determine opposite platform
+    target_platform = "polymarket" if platform == "kalshi" else "kalshi"
+
+    # Use pgvector cosine similarity to find top candidates
+    # Multiply by limit factor to account for hard constraint filtering
+    search_limit = min(limit * 5, settings.candidate_limit * 2)
+
+    similarity_query = text("""
+        SELECT
+            id,
+            raw_title,
+            1 - (text_embedding <=> :embedding) as cosine_similarity
+        FROM markets
+        WHERE platform = :target_platform
+        AND text_embedding IS NOT NULL
+        AND status = 'active'
+        ORDER BY text_embedding <=> :embedding
+        LIMIT :limit
+    """)
+
+    results = db.execute(
+        similarity_query,
+        {
+            "embedding": str(source_market.text_embedding),
+            "target_platform": target_platform,
+            "limit": search_limit,
+        }
+    ).fetchall()
+
+    logger.info(
+        "vector_search_complete",
+        platform=platform,
+        market_id=market_id,
+        candidates_found=len(results),
+    )
+
+    # Calculate detailed similarity for each candidate
+    candidates = []
+    for row in results:
+        candidate_market = db.query(Market).filter(Market.id == row.id).first()
+        if not candidate_market:
+            continue
+
+        # Determine which is Kalshi and which is Polymarket
+        if platform == "kalshi":
+            market_k = source_market
+            market_p = candidate_market
+        else:
+            market_k = candidate_market
+            market_p = source_market
+
+        # Calculate detailed similarity
+        try:
+            similarity_result = calculate_similarity(market_k, market_p)
+
+            # Assign tier
+            tier = assign_tier(
+                p_match=similarity_result["p_match"],
+                features=similarity_result["features"],
+                hard_constraints_violated=similarity_result["hard_constraints_violated"]
+            )
+
+            # Only include Tier 1 and Tier 2 candidates
+            if tier <= 2:
+                candidates.append(CandidateMarket(
+                    market_id=candidate_market.id,
+                    platform=candidate_market.platform,
+                    title=candidate_market.raw_title or "",
+                    quick_similarity=QuickSimilarity(
+                        text_score=similarity_result["features"]["text"]["score_text"],
+                        entity_score=similarity_result["features"]["entity"]["score_entity_final"],
+                        time_score=similarity_result["features"]["time"]["score_time_final"],
+                        overall=similarity_result["similarity_score"],
+                    ),
+                    rank=len(candidates) + 1,
+                ))
+
+        except Exception as e:
+            logger.error(
+                "calculate_similarity_failed",
+                source_id=source_market.id,
+                candidate_id=candidate_market.id,
+                error=str(e),
+            )
+            continue
+
+        # Stop once we have enough good candidates
+        if len(candidates) >= limit:
+            break
+
+    # Sort by overall similarity score
+    candidates.sort(key=lambda x: x.quick_similarity.overall, reverse=True)
+
+    # Update ranks
+    for i, candidate in enumerate(candidates):
+        candidate.rank = i + 1
+
+    logger.info(
+        "get_candidates_complete",
+        platform=platform,
+        market_id=market_id,
+        total_candidates=len(candidates),
+    )
+
     return CandidatesResponse(
         market_id=market_id,
         platform=platform,
-        candidates=[],
-        total_candidates=0,
+        candidates=candidates,
+        total_candidates=len(candidates),
     )
