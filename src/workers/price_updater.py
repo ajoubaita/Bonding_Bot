@@ -5,6 +5,7 @@ and updates the database without re-running expensive NLP processing.
 """
 
 import time
+import json
 from typing import Dict, Any, List
 from datetime import datetime
 from sqlalchemy.orm import Session
