@@ -142,6 +142,17 @@ class PriceUpdater:
 
             updated_count = 0
 
+            # Debug: log first market to see field names
+            if markets_data and len(markets_data) > 0:
+                first_market = markets_data[0] if isinstance(markets_data[0], dict) else {}
+                logger.debug(
+                    "polymarket_first_market_sample",
+                    fields=list(first_market.keys())[:15] if first_market else [],
+                    condition_id=first_market.get("condition_id"),
+                    conditionId=first_market.get("conditionId"),
+                    has_tokens=bool(first_market.get("tokens")),
+                )
+
             for market_data in markets_data:
                 try:
                     if not isinstance(market_data, dict):
