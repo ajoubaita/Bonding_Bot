@@ -8,6 +8,7 @@ import time
 from typing import Dict, Any, List
 from datetime import datetime
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 import structlog
 
 from src.config import settings
@@ -88,6 +89,10 @@ class PriceUpdater:
 
                         market.outcome_schema = outcome_schema
                         market.updated_at = datetime.utcnow()
+
+                        # Mark JSONB field as modified for SQLAlchemy
+                        flag_modified(market, "outcome_schema")
+
                         updated_count += 1
 
                 except Exception as e:
@@ -176,6 +181,10 @@ class PriceUpdater:
 
                         market.outcome_schema = outcome_schema
                         market.updated_at = datetime.utcnow()
+
+                        # Mark JSONB field as modified for SQLAlchemy
+                        flag_modified(market, "outcome_schema")
+
                         updated_count += 1
 
                 except Exception as e:
