@@ -14,7 +14,7 @@ import structlog
 from src.config import settings
 from src.models import Market, get_db
 from src.ingestion.kalshi_client import KalshiClient
-from src.ingestion.polymarket_client import PolymarketCLOBClient
+from src.ingestion.polymarket_client import PolymarketGammaClient
 
 logger = structlog.get_logger()
 
@@ -25,7 +25,7 @@ class PriceUpdater:
     def __init__(self):
         """Initialize price updater."""
         self.kalshi_client = KalshiClient()
-        self.poly_clob_client = PolymarketCLOBClient()
+        self.poly_gamma_client = PolymarketGammaClient()
         self.running = False
 
         logger.info("price_updater_initialized")
@@ -119,7 +119,7 @@ class PriceUpdater:
             return 0
 
     def update_polymarket_prices(self, db: Session) -> int:
-        """Update prices for Polymarket markets.
+        """Update prices for Polymarket markets using Gamma API.
 
         Args:
             db: Database session
@@ -130,41 +130,63 @@ class PriceUpdater:
         logger.info("update_polymarket_prices_start")
 
         try:
-            # Fetch simplified markets with prices from CLOB API
-            markets_data = self.poly_clob_client.get_simplified_markets()
+            # Fetch markets from Gamma API with prices
+            # Gamma API returns max 500 markets per request, so we'll fetch multiple batches
+            all_markets_data = []
+            limit = 500
+            offset = 0
+            max_markets = 5000  # Fetch up to 5000 markets (10 batches)
 
-            if not isinstance(markets_data, list):
-                logger.error(
-                    "unexpected_polymarket_response",
-                    response_type=type(markets_data).__name__,
+            while offset < max_markets:
+                batch = self.poly_gamma_client.get_markets(
+                    limit=limit,
+                    offset=offset,
+                    active=True,  # Only active markets
                 )
-                return 0
+
+                if not batch or not isinstance(batch, list):
+                    break
+
+                all_markets_data.extend(batch)
+
+                # If we got fewer markets than limit, we've reached the end
+                if len(batch) < limit:
+                    break
+
+                offset += limit
+
+            logger.info(
+                "polymarket_gamma_fetch_complete",
+                total_markets=len(all_markets_data),
+            )
 
             updated_count = 0
 
-            # Debug: log first market to see field names
-            if markets_data and len(markets_data) > 0:
-                first_market = markets_data[0] if isinstance(markets_data[0], dict) else {}
-                logger.debug(
-                    "polymarket_first_market_sample",
-                    fields=list(first_market.keys())[:15] if first_market else [],
-                    condition_id=first_market.get("condition_id"),
-                    conditionId=first_market.get("conditionId"),
-                    has_tokens=bool(first_market.get("tokens")),
-                )
-
-            for market_data in markets_data:
+            for market_data in all_markets_data:
                 try:
                     if not isinstance(market_data, dict):
                         continue
 
-                    condition_id = market_data.get("condition_id")
-                    tokens = market_data.get("tokens", [])
+                    condition_id = market_data.get("conditionId")
+                    outcome_prices_str = market_data.get("outcomePrices")
 
-                    if not condition_id or not tokens:
+                    if not condition_id or not outcome_prices_str:
                         continue
 
-                    # Find market in database
+                    # Parse outcomePrices JSON string array
+                    try:
+                        outcome_prices = json.loads(outcome_prices_str)
+                        if not isinstance(outcome_prices, list):
+                            continue
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(
+                            "invalid_outcome_prices_json",
+                            condition_id=condition_id,
+                            outcome_prices=outcome_prices_str,
+                        )
+                        continue
+
+                    # Find market in database by condition_id
                     market = db.query(Market).filter(
                         Market.id == condition_id,
                         Market.platform == "polymarket"
@@ -175,20 +197,20 @@ class PriceUpdater:
                         outcome_schema = market.outcome_schema.copy()
                         outcomes = outcome_schema.get("outcomes", [])
 
-                        # Match tokens to outcomes
-                        for token in tokens:
-                            if not isinstance(token, dict):
-                                continue
-
-                            token_price = float(token.get("price", 0.5))
-                            token_outcome = token.get("outcome", "").lower()
-
-                            # Update matching outcome
-                            for outcome in outcomes:
-                                outcome_label = outcome.get("label", "").lower()
-                                if token_outcome in outcome_label or outcome_label in token_outcome:
-                                    outcome["price"] = token_price
-                                    break
+                        # Map prices to outcomes by index
+                        for i, price_str in enumerate(outcome_prices):
+                            if i < len(outcomes):
+                                try:
+                                    price = float(price_str)
+                                    outcomes[i]["price"] = price
+                                except (ValueError, TypeError):
+                                    logger.warning(
+                                        "invalid_price_value",
+                                        condition_id=condition_id,
+                                        index=i,
+                                        price_str=price_str,
+                                    )
+                                    continue
 
                         market.outcome_schema = outcome_schema
                         market.updated_at = datetime.utcnow()
@@ -201,7 +223,7 @@ class PriceUpdater:
                 except Exception as e:
                     logger.error(
                         "update_polymarket_price_failed",
-                        condition_id=market_data.get("condition_id") if isinstance(market_data, dict) else "unknown",
+                        condition_id=market_data.get("conditionId") if isinstance(market_data, dict) else "unknown",
                         error=str(e),
                     )
                     continue
@@ -211,7 +233,7 @@ class PriceUpdater:
             logger.info(
                 "update_polymarket_prices_complete",
                 updated=updated_count,
-                total_fetched=len(markets_data),
+                total_fetched=len(all_markets_data),
             )
 
             return updated_count
@@ -292,4 +314,4 @@ class PriceUpdater:
     def close(self):
         """Close API clients."""
         self.kalshi_client.close()
-        self.poly_clob_client.close()
+        self.poly_gamma_client.session.close()
