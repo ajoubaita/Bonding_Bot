@@ -123,6 +123,38 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  price_updater:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: bonding_price_updater
+    restart: unless-stopped
+    command: python3 scripts/run_price_updater.py
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-bonding_user}:${POSTGRES_PASSWORD:-bonding_pass}@postgres:5432/${POSTGRES_DB:-bonding_agent}
+      - REDIS_URL=redis://redis:6379/0
+      - KALSHI_API_BASE=${KALSHI_API_BASE:-https://api.elections.kalshi.com/trade-api/v2}
+      - KALSHI_API_KEY=${KALSHI_API_KEY}
+      - POLYMARKET_CLOB_API_BASE=${POLYMARKET_CLOB_API_BASE:-https://clob.polymarket.com}
+      - POLYMARKET_API_KEY=${POLYMARKET_API_KEY}
+      - PRICE_UPDATE_INTERVAL_SEC=${PRICE_UPDATE_INTERVAL_SEC:-60}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - bonding_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   postgres_data:
     driver: local
