@@ -142,7 +142,7 @@ class PriceUpdater:
                 batch = self.poly_gamma_client.get_markets(
                     limit=limit,
                     offset=offset,
-                    active=True,  # Only active markets
+                    # Fetch all markets to match database (no active filter)
                 )
 
                 if not batch or not isinstance(batch, list):
