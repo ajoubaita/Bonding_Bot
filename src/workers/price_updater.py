@@ -161,7 +161,16 @@ class PriceUpdater:
                 total_markets=len(all_markets_data),
             )
 
+            # Log sample conditionIds from API for debugging
+            if all_markets_data:
+                sample_ids = [m.get("conditionId") for m in all_markets_data[:5] if isinstance(m, dict)]
+                logger.info(
+                    "polymarket_sample_api_condition_ids",
+                    sample_ids=sample_ids,
+                )
+
             updated_count = 0
+            checked_count = 0
 
             for market_data in all_markets_data:
                 try:
