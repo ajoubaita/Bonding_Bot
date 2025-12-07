@@ -2,6 +2,7 @@
 
 import time
 import multiprocessing as mp
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Tuple
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -319,22 +320,29 @@ class MarketPoller:
             return total_ingested  # Return what was ingested before error
 
     def poll_once(self) -> Dict[str, int]:
-        """Poll both platforms once.
+        """Poll both platforms once in parallel.
 
         Returns:
             Dictionary with ingestion counts
         """
-        logger.info("poll_once_start")
+        logger.info("poll_once_start_parallel")
 
         start_time = datetime.utcnow()
 
-        kalshi_count = self.poll_kalshi()
-        poly_count = self.poll_polymarket()
+        # Run both platform polls in parallel using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            # Submit both polls to run concurrently
+            kalshi_future = executor.submit(self.poll_kalshi)
+            poly_future = executor.submit(self.poll_polymarket)
+
+            # Wait for both to complete and get results
+            kalshi_count = kalshi_future.result()
+            poly_count = poly_future.result()
 
         duration = (datetime.utcnow() - start_time).total_seconds()
 
         logger.info(
-            "poll_once_complete",
+            "poll_once_complete_parallel",
             kalshi_markets=kalshi_count,
             polymarket_markets=poly_count,
             duration_seconds=duration,
