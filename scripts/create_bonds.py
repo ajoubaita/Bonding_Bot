@@ -61,10 +61,13 @@ def find_candidates_with_embedding(
         LIMIT :limit
     """)
 
+    # Convert numpy array to list for pgvector compatibility
+    embedding_list = kalshi_market.text_embedding.tolist() if hasattr(kalshi_market.text_embedding, 'tolist') else list(kalshi_market.text_embedding)
+
     results = db.execute(
         query,
         {
-            "embedding": kalshi_market.text_embedding,
+            "embedding": embedding_list,
             "category": kalshi_market.category,
             "limit": limit,
         }
