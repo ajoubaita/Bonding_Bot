@@ -370,7 +370,7 @@ def create_bonds_batch(
             "processing_kalshi_market",
             progress=f"{i+1}/{len(kalshi_markets)}",
             market_id=kalshi_market.id,
-            title=kalshi_market.title[:80],
+            title=(kalshi_market.clean_title or kalshi_market.raw_title or "")[:80],
         )
 
         market_stats = process_kalshi_market(db, kalshi_market)
