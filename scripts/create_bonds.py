@@ -41,7 +41,7 @@ def find_candidates_with_embedding(
     Returns:
         List of candidate Polymarket markets sorted by embedding similarity
     """
-    if not kalshi_market.embedding or len(kalshi_market.embedding) == 0:
+    if not kalshi_market.text_embedding or len(kalshi_market.text_embedding) == 0:
         logger.warning(
             "find_candidates_no_embedding",
             market_id=kalshi_market.id,
@@ -52,19 +52,19 @@ def find_candidates_with_embedding(
     # <=> operator computes cosine distance (1 - cosine_similarity)
     # We want similarity DESC, so distance ASC
     query = text("""
-        SELECT m.id, m.platform_id, m.title, m.embedding <=> :embedding AS distance
+        SELECT m.id, m.platform_id, m.clean_title, m.text_embedding <=> :embedding AS distance
         FROM markets m
         WHERE m.platform = 'polymarket'
-          AND m.embedding IS NOT NULL
+          AND m.text_embedding IS NOT NULL
           AND m.category = :category
-        ORDER BY m.embedding <=> :embedding
+        ORDER BY m.text_embedding <=> :embedding
         LIMIT :limit
     """)
 
     results = db.execute(
         query,
         {
-            "embedding": kalshi_market.embedding,
+            "embedding": kalshi_market.text_embedding,
             "category": kalshi_market.category,
             "limit": limit,
         }
@@ -337,7 +337,7 @@ def create_bonds_batch(
         db.query(Market)
         .filter(
             Market.platform == "kalshi",
-            Market.embedding.isnot(None),
+            Market.text_embedding.isnot(None),
             Market.category.isnot(None),
         )
         .order_by(Market.created_at.desc())
