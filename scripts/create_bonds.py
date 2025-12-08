@@ -41,7 +41,7 @@ def find_candidates_with_embedding(
     Returns:
         List of candidate Polymarket markets sorted by embedding similarity
     """
-    if not kalshi_market.text_embedding or len(kalshi_market.text_embedding) == 0:
+    if kalshi_market.text_embedding is None or len(kalshi_market.text_embedding) == 0:
         logger.warning(
             "find_candidates_no_embedding",
             market_id=kalshi_market.id,
