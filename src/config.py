@@ -112,20 +112,23 @@ class Settings(BaseSettings):
     )
 
     # Tier Thresholds
+    # NOTE: p_match uses logistic regression that requires calibration
+    # Until calibrated, we lowered threshold from 0.98 to 0.92
     tier1_p_match_threshold: float = Field(
-        default=0.98,
-        description="Minimum p_match for Tier 1 (auto bond)"
+        default=0.92,
+        description="Minimum p_match for Tier 1 (auto bond) - lowered from 0.98 until logistic regression is calibrated"
     )
     tier2_p_match_threshold: float = Field(
-        default=0.90,
-        description="Minimum p_match for Tier 2 (cautious bond)"
+        default=0.85,
+        description="Minimum p_match for Tier 2 (cautious bond) - lowered from 0.90"
     )
 
     # Tier 1 Additional Requirements
-    tier1_min_text_score: float = Field(default=0.85)
-    tier1_min_outcome_score: float = Field(default=0.95)
-    tier1_min_time_score: float = Field(default=0.90)
-    tier1_min_resolution_score: float = Field(default=0.95)
+    # Relaxed from previous values to make Tier 1 achievable
+    tier1_min_text_score: float = Field(default=0.80)  # was 0.85
+    tier1_min_outcome_score: float = Field(default=0.90)  # was 0.95
+    tier1_min_time_score: float = Field(default=0.85)  # was 0.90
+    tier1_min_resolution_score: float = Field(default=0.90)  # was 0.95
 
     # Tier 2 Additional Requirements
     tier2_min_text_score: float = Field(default=0.70)
