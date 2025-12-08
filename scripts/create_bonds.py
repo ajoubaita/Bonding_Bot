@@ -52,7 +52,7 @@ def find_candidates_with_embedding(
     # <=> operator computes cosine distance (1 - cosine_similarity)
     # We want similarity DESC, so distance ASC
     query = text("""
-        SELECT m.id, m.platform_id, m.clean_title, m.text_embedding <=> :embedding AS distance
+        SELECT m.id, m.text_embedding <=> :embedding AS distance
         FROM markets m
         WHERE m.platform = 'polymarket'
           AND m.text_embedding IS NOT NULL
@@ -85,7 +85,7 @@ def find_candidates_with_embedding(
         "find_candidates_complete",
         kalshi_id=kalshi_market.id,
         found=len(ordered_candidates),
-        top_distance=results[0][3] if results else None,
+        top_distance=results[0][1] if results else None,
     )
 
     return ordered_candidates
