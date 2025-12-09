@@ -136,9 +136,10 @@ class Settings(BaseSettings):
     tier2_min_time_score: float = Field(default=0.70)
 
     # Hard Constraint Thresholds
-    hard_constraint_min_text_score: float = Field(default=0.60)
-    hard_constraint_min_entity_score: float = Field(default=0.20)
-    hard_constraint_max_time_delta_days: int = Field(default=14)
+    # NOTE: Relaxed constraints to enable bond creation during calibration phase
+    hard_constraint_min_text_score: float = Field(default=0.50)  # Lowered from 0.60
+    hard_constraint_min_entity_score: float = Field(default=0.0)  # Lowered from 0.20 to allow markets without entity overlap
+    hard_constraint_max_time_delta_days: int = Field(default=60)  # Increased from 14 to 60 days
 
     # Logging
     log_level: str = Field(

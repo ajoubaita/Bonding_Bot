@@ -51,12 +51,12 @@ def find_candidates_with_embedding(
     # Use pgvector cosine similarity search
     # <=> operator computes cosine distance (1 - cosine_similarity)
     # We want similarity DESC, so distance ASC
+    # NOTE: Removed category filter since all markets have category="unknown"
     query = text("""
         SELECT m.id, m.text_embedding <=> CAST(:embedding AS vector) AS distance
         FROM markets m
         WHERE m.platform = 'polymarket'
           AND m.text_embedding IS NOT NULL
-          AND m.category = :category
         ORDER BY m.text_embedding <=> CAST(:embedding AS vector)
         LIMIT :limit
     """)
@@ -68,7 +68,6 @@ def find_candidates_with_embedding(
         query,
         {
             "embedding": embedding_list,
-            "category": kalshi_market.category,
             "limit": limit,
         }
     ).fetchall()
