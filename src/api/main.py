@@ -7,7 +7,7 @@ import structlog
 
 from src.config import settings
 from src.api.middleware.auth import AuthMiddleware
-from src.api.routes import health, markets, pairs
+from src.api.routes import health, markets, pairs, arbitrage
 
 # Configure structured logging
 # Convert string log level to integer
@@ -52,6 +52,7 @@ app.add_middleware(AuthMiddleware)
 app.include_router(health.router, prefix="/v1", tags=["Health"])
 app.include_router(markets.router, prefix="/v1/markets", tags=["Markets"])
 app.include_router(pairs.router, prefix="/v1/pairs", tags=["Pairs"])
+app.include_router(arbitrage.router, prefix="/v1", tags=["Arbitrage"])
 
 
 @app.on_event("startup")
