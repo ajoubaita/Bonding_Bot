@@ -335,14 +335,18 @@ def create_bonds_batch(
     start_time = time.time()
 
     # Query normalized Kalshi markets
+    # Order by volume (descending) to prioritize high-volume markets for better bonds
     query = (
         db.query(Market)
         .filter(
             Market.platform == "kalshi",
+            Market.status == "active",  # Only active markets
             Market.text_embedding.isnot(None),
-            Market.category.isnot(None),
         )
-        .order_by(Market.created_at.desc())
+        .order_by(
+            Market.market_metadata["volume"].cast(db.Float).desc(),  # Prioritize high-volume markets
+            Market.created_at.desc(),  # Then by recency
+        )
     )
 
     if max_markets:

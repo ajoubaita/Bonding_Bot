@@ -63,8 +63,8 @@ class Settings(BaseSettings):
 
     # Performance Settings
     candidate_limit: int = Field(
-        default=20,
-        description="Max candidates per market"
+        default=50,
+        description="Max candidates per market (increased from 20 for better matching)"
     )
     similarity_calc_timeout_ms: int = Field(
         default=50,
@@ -139,7 +139,7 @@ class Settings(BaseSettings):
     # NOTE: Relaxed constraints to enable bond creation during calibration phase
     hard_constraint_min_text_score: float = Field(default=0.50)  # Lowered from 0.60
     hard_constraint_min_entity_score: float = Field(default=0.0)  # Lowered from 0.20 to allow markets without entity overlap
-    hard_constraint_max_time_delta_days: int = Field(default=60)  # Increased from 14 to 60 days
+    hard_constraint_max_time_delta_days: int = Field(default=90)  # Increased from 60 to 90 days (was 14 originally)
 
     # Logging
     log_level: str = Field(
