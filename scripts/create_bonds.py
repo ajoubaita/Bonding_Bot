@@ -188,20 +188,48 @@ def create_bond(
     """
     pair_id = f"{kalshi_market.id}_{poly_market.id}"
 
-    # Check if bond already exists
-    existing = db.query(Bond).filter(Bond.pair_id == pair_id).first()
-    if existing:
-        logger.info(
-            "bond_already_exists",
-            pair_id=pair_id,
-            existing_tier=existing.tier,
-            new_tier=tier,
-        )
-        return existing
-
     # Extract data
     outcome_mapping = extract_outcome_mapping(similarity_result)
     feature_breakdown = extract_feature_breakdown(similarity_result)
+
+    # Check if bond already exists
+    existing = db.query(Bond).filter(Bond.pair_id == pair_id).first()
+    if existing:
+        # Update bond if new tier is better (lower tier number = higher confidence)
+        if tier < existing.tier:
+            existing.tier = tier
+            existing.p_match = similarity_result["p_match"]
+            existing.similarity_score = similarity_result["similarity_score"]
+            existing.outcome_mapping = outcome_mapping
+            existing.feature_breakdown = feature_breakdown
+            existing.last_validated = datetime.utcnow()
+
+            try:
+                db.commit()
+                logger.info(
+                    "bond_tier_upgraded",
+                    pair_id=pair_id,
+                    old_tier=existing.tier,
+                    new_tier=tier,
+                    p_match=existing.p_match,
+                )
+                return existing
+            except Exception as e:
+                db.rollback()
+                logger.error(
+                    "bond_upgrade_failed",
+                    pair_id=pair_id,
+                    error=str(e),
+                )
+                return existing
+        else:
+            logger.debug(
+                "bond_already_exists_same_tier",
+                pair_id=pair_id,
+                existing_tier=existing.tier,
+                new_tier=tier,
+            )
+            return existing
 
     # Create bond
     bond = Bond(
