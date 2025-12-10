@@ -10,8 +10,7 @@ from dataclasses import dataclass, asdict
 import structlog
 from sqlalchemy.orm import Session
 
-from src.models import Bond, KalshiMarket, PolymarketMarket
-from src.database import get_db
+from src.models import Bond, Market, get_db
 from src.utils.arbitrage import calculate_arbitrage_opportunity
 
 logger = structlog.get_logger()
@@ -21,7 +20,7 @@ logger = structlog.get_logger()
 class ArbitrageOpportunity:
     """Data class for tracked arbitrage opportunity."""
 
-    bond_id: int
+    bond_id: str  # pair_id (string)
     kalshi_market_id: str
     polymarket_market_id: str
     kalshi_platform_id: str
@@ -83,7 +82,7 @@ class ArbitrageMonitor:
             max_opportunities: Maximum number of opportunities to track
         """
         self.max_opportunities = max_opportunities
-        self.opportunities: Dict[int, ArbitrageOpportunity] = {}
+        self.opportunities: Dict[str, ArbitrageOpportunity] = {}  # Keyed by pair_id (string)
         self.last_scan: Optional[datetime] = None
 
         logger.info(
@@ -108,10 +107,12 @@ class ArbitrageMonitor:
         db = next(get_db())
 
         try:
-            # Query bonds with arbitrage metadata
+            # Query all active bonds
+            # Note: arbitrage_metadata doesn't exist on Bond model
+            # We'll calculate arbitrage on the fly or store in a separate table
             query = (
                 db.query(Bond)
-                .filter(Bond.arbitrage_metadata.isnot(None))
+                .filter(Bond.status == "active")
             )
 
             if tier_filter is not None:
@@ -124,27 +125,40 @@ class ArbitrageMonitor:
             new = 0
 
             for bond in bonds:
-                arbitrage = bond.arbitrage_metadata or {}
+                # Get markets for this bond
+                kalshi_market = db.query(Market).filter(Market.id == bond.kalshi_market_id).first()
+                poly_market = db.query(Market).filter(Market.id == bond.polymarket_market_id).first()
+                
+                if not kalshi_market or not poly_market:
+                    continue
+                
+                # Calculate arbitrage opportunity on the fly
+                from src.utils.arbitrage import calculate_arbitrage_opportunity
+                arbitrage = calculate_arbitrage_opportunity(
+                    kalshi_market,
+                    poly_market,
+                    bond.outcome_mapping
+                )
 
                 # Skip if no arbitrage or below threshold
                 if not arbitrage.get("has_arbitrage"):
                     # Remove from tracking if it was there
-                    if bond.id in self.opportunities:
-                        del self.opportunities[bond.id]
+                    if bond.pair_id in self.opportunities:
+                        del self.opportunities[bond.pair_id]
                     continue
 
                 profit = arbitrage.get("profit_per_dollar", 0.0)
                 if profit < min_profit_threshold:
-                    if bond.id in self.opportunities:
-                        del self.opportunities[bond.id]
+                    if bond.pair_id in self.opportunities:
+                        del self.opportunities[bond.pair_id]
                     continue
 
                 # Create or update opportunity
                 now = datetime.utcnow()
 
-                if bond.id in self.opportunities:
+                if bond.pair_id in self.opportunities:
                     # Update existing opportunity
-                    opp = self.opportunities[bond.id]
+                    opp = self.opportunities[bond.pair_id]
                     opp.profit_per_dollar = profit
                     opp.kalshi_price = arbitrage.get("kalshi_price", 0.0)
                     opp.polymarket_price = arbitrage.get("polymarket_price", 0.0)
@@ -158,13 +172,13 @@ class ArbitrageMonitor:
                     opp.price_update_count += 1
                     updated += 1
                 else:
-                    # Create new opportunity
+                        # Create new opportunity
                     opp = ArbitrageOpportunity(
-                        bond_id=bond.id,
-                        kalshi_market_id=bond.kalshi_market.id,
-                        polymarket_market_id=bond.polymarket_market.id,
-                        kalshi_platform_id=bond.kalshi_market.platform_id,
-                        polymarket_platform_id=bond.polymarket_market.platform_id,
+                        bond_id=bond.pair_id,  # Use pair_id as bond identifier
+                        kalshi_market_id=bond.kalshi_market_id,
+                        polymarket_market_id=bond.polymarket_market_id,
+                        kalshi_platform_id=kalshi_market.id if kalshi_market else bond.kalshi_market_id,
+                        polymarket_platform_id=poly_market.condition_id if poly_market and poly_market.condition_id else bond.polymarket_market_id,
                         arbitrage_type=arbitrage.get("arbitrage_type", ""),
                         profit_per_dollar=profit,
                         kalshi_price=arbitrage.get("kalshi_price", 0.0),
@@ -180,7 +194,7 @@ class ArbitrageMonitor:
                         price_age_kalshi_sec=arbitrage.get("price_age_kalshi_sec"),
                         price_age_poly_sec=arbitrage.get("price_age_poly_sec"),
                     )
-                    self.opportunities[bond.id] = opp
+                    self.opportunities[bond.pair_id] = opp
                     new += 1
 
                 discovered.append(opp)
@@ -252,11 +266,11 @@ class ArbitrageMonitor:
 
         return opportunities[:limit]
 
-    def get_opportunity(self, bond_id: int) -> Optional[ArbitrageOpportunity]:
+    def get_opportunity(self, bond_id: str) -> Optional[ArbitrageOpportunity]:
         """Get specific opportunity by bond ID.
 
         Args:
-            bond_id: Bond ID to lookup
+            bond_id: Bond pair_id to lookup
 
         Returns:
             ArbitrageOpportunity or None if not found

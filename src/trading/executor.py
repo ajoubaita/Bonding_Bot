@@ -10,7 +10,7 @@ import structlog
 from src.trading.risk_manager import RiskManager
 from src.trading.order_manager import OrderManager, OrderSide
 from src.models import Bond
-from src.database import get_db
+from src.models import get_db
 
 logger = structlog.get_logger()
 
