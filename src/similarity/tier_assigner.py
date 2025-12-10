@@ -1,6 +1,6 @@
 """Tier assignment logic for bonded pairs."""
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import structlog
 
 from src.config import settings
@@ -11,7 +11,10 @@ logger = structlog.get_logger()
 def assign_tier(
     p_match: float,
     features: Dict[str, Any],
-    hard_constraints_violated: bool
+    hard_constraints_violated: bool,
+    market_k_id: Optional[str] = None,
+    market_p_id: Optional[str] = None,
+    similarity_result: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Assign tier based on similarity scores and requirements.
 
@@ -19,6 +22,9 @@ def assign_tier(
         p_match: Match probability [0, 1]
         features: Feature breakdown dictionary
         hard_constraints_violated: Whether hard constraints were violated
+        market_k_id: Kalshi market ID (for logging)
+        market_p_id: Polymarket market ID (for logging)
+        similarity_result: Full similarity result (for logging)
 
     Returns:
         Tier (1, 2, or 3)
@@ -26,6 +32,19 @@ def assign_tier(
     # Immediate reject if hard constraints violated
     if hard_constraints_violated:
         logger.info("tier_assignment", tier=3, reason="hard_constraints_violated")
+        
+        # Log rejection for analysis
+        if market_k_id and market_p_id and similarity_result:
+            from src.utils.bonding_logger import log_bonding_candidate
+            log_bonding_candidate(
+                market_k_id=market_k_id,
+                market_p_id=market_p_id,
+                similarity_result=similarity_result,
+                was_accepted=False,
+                tier=3,
+                rejection_reason="hard_constraints_violated",
+            )
+        
         return 3
 
     # Extract individual feature scores
@@ -57,6 +76,18 @@ def assign_tier(
                 "resolution": score_resolution,
             },
         )
+        
+        # Log acceptance for analysis
+        if market_k_id and market_p_id and similarity_result:
+            from src.utils.bonding_logger import log_bonding_candidate
+            log_bonding_candidate(
+                market_k_id=market_k_id,
+                market_p_id=market_p_id,
+                similarity_result=similarity_result,
+                was_accepted=True,
+                tier=1,
+            )
+        
         return 1
 
     # Tier 2: Cautious Bond (moderate confidence)
@@ -80,6 +111,18 @@ def assign_tier(
                 "resolution": score_resolution,
             },
         )
+        
+        # Log acceptance for analysis
+        if market_k_id and market_p_id and similarity_result:
+            from src.utils.bonding_logger import log_bonding_candidate
+            log_bonding_candidate(
+                market_k_id=market_k_id,
+                market_p_id=market_p_id,
+                similarity_result=similarity_result,
+                was_accepted=True,
+                tier=2,
+            )
+        
         return 2
 
     # Tier 3: Reject (low confidence)
@@ -96,6 +139,19 @@ def assign_tier(
             "resolution": score_resolution,
         },
     )
+    
+    # Log rejection for analysis
+    if market_k_id and market_p_id and similarity_result:
+        from src.utils.bonding_logger import log_bonding_candidate
+        log_bonding_candidate(
+            market_k_id=market_k_id,
+            market_p_id=market_p_id,
+            similarity_result=similarity_result,
+            was_accepted=False,
+            tier=3,
+            rejection_reason="insufficient_scores",
+        )
+    
     return 3
 
 

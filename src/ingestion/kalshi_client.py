@@ -178,6 +178,45 @@ class KalshiClient:
         """
         logger.debug("kalshi_get_market", ticker=ticker)
         return self._get(f"/markets/{ticker}")
+    
+    def get_market_order_book(self, ticker: str) -> Dict[str, Any]:
+        """Get order book for a market (if available in API).
+
+        Args:
+            ticker: Market ticker symbol
+
+        Returns:
+            Order book data with bids and asks
+        """
+        logger.debug("kalshi_get_market_order_book", ticker=ticker)
+        # Note: Kalshi API may not have dedicated order book endpoint
+        # This would use market data which includes yes_bid, yes_ask, etc.
+        market_data = self.get_market(ticker)
+        
+        # Extract bid/ask from market data
+        order_book = {
+            "bids": [],
+            "asks": [],
+        }
+        
+        # Kalshi provides yes_bid and yes_ask in market data
+        yes_bid = market_data.get("yes_bid")
+        yes_ask = market_data.get("yes_ask")
+        
+        if yes_bid:
+            # Convert from cents to decimal
+            order_book["bids"].append({
+                "price": yes_bid / 100.0,
+                "size": market_data.get("liquidity", 0) / 2.0,  # Estimate
+            })
+        
+        if yes_ask:
+            order_book["asks"].append({
+                "price": yes_ask / 100.0,
+                "size": market_data.get("liquidity", 0) / 2.0,  # Estimate
+            })
+        
+        return order_book
 
     def get_series(
         self,

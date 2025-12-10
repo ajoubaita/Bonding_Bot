@@ -365,7 +365,10 @@ async def get_candidates(
             tier = assign_tier(
                 p_match=similarity_result["p_match"],
                 features=similarity_result["features"],
-                hard_constraints_violated=similarity_result["hard_constraints_violated"]
+                hard_constraints_violated=similarity_result["hard_constraints_violated"],
+                market_k_id=source_market.id,
+                market_p_id=candidate_market.id,
+                similarity_result=similarity_result,
             )
 
             # Only include Tier 1 and Tier 2 candidates
@@ -479,48 +482,103 @@ async def calculate_arbitrage_opportunity(
             },
         )
 
-    # Calculate arbitrage opportunity
+    # Calculate arbitrage opportunity using enhanced calculator
     try:
-        opportunity = calculate_arbitrage(
+        from src.arbitrage.enhanced_calculator import calculate_enhanced_arbitrage
+        from src.ingestion.kalshi_client import KalshiClient
+        from src.ingestion.polymarket_client import PolymarketCLOBClient
+        
+        # Fetch order books for accurate calculation
+        kalshi_client = KalshiClient()
+        poly_client = PolymarketCLOBClient()
+        
+        try:
+            k_order_book = kalshi_client.get_market_order_book(kalshi_id)
+            p_token_id = polymarket_market.condition_id or polymarket_id
+            p_order_book = poly_client.get_market_order_book(p_token_id)
+        except Exception as e:
+            logger.warning(
+                "order_book_fetch_failed",
+                kalshi_id=kalshi_id,
+                poly_id=polymarket_id,
+                error=str(e),
+            )
+            k_order_book = None
+            p_order_book = None
+        
+        opportunity = calculate_enhanced_arbitrage(
             market_k=kalshi_market,
             market_p=polymarket_market,
-            fee_rate=fee_rate,
+            order_book_k=k_order_book,
+            order_book_p=p_order_book,
+            min_edge_percent=fee_rate,  # Use fee_rate as minimum edge
         )
+        
+        # Close clients
+        kalshi_client.close()
+        poly_client.close()
 
         logger.info(
             "calculate_arbitrage_opportunity_complete",
             kalshi_id=kalshi_id,
             polymarket_id=polymarket_id,
             opportunity_type=opportunity.opportunity_type,
-            net_profit=opportunity.net_profit,
+            net_profit=opportunity.net_profit_per_share,
             roi_percent=opportunity.roi_percent,
         )
+        
+        # Log arbitrage opportunity for analysis
+        from src.utils.bonding_logger import log_arbitrage_opportunity
+        log_arbitrage_opportunity(
+            bond_id=f"{kalshi_id}_{polymarket_id}",
+            market_k_id=kalshi_id,
+            market_p_id=polymarket_id,
+            opportunity={
+                "has_arbitrage": opportunity.opportunity_type != "none",
+                "arbitrage_type": opportunity.opportunity_type,
+                "profit_per_dollar": opportunity.net_profit_per_share,
+                "kalshi_price": opportunity.kalshi_mid,
+                "polymarket_price": opportunity.polymarket_mid,
+                "min_volume": 0.0,  # Will be calculated from markets
+                "min_liquidity": opportunity.available_liquidity,
+                "max_position_size": opportunity.recommended_position_size,
+                "warnings": opportunity.warnings,
+                "price_age_kalshi_sec": opportunity.price_staleness_sec,
+                "price_age_poly_sec": opportunity.price_staleness_sec,
+            },
+        )
 
-        # Convert dataclass to response model
+        # Convert enhanced opportunity to response model
+        # Map enhanced calculator fields to response model
+        k_yes = opportunity.kalshi_mid
+        k_no = 1.0 - k_yes if k_yes else 0.5
+        p_yes = opportunity.polymarket_mid
+        p_no = 1.0 - p_yes if p_yes else 0.5
+        
         return ArbitrageOpportunityResponse(
             kalshi_market_id=opportunity.kalshi_market_id,
             polymarket_market_id=opportunity.polymarket_market_id,
             kalshi_title=opportunity.kalshi_title,
             polymarket_title=opportunity.polymarket_title,
             opportunity_type=opportunity.opportunity_type,
-            kalshi_yes_price=opportunity.kalshi_yes_price,
-            kalshi_no_price=opportunity.kalshi_no_price,
-            polymarket_yes_price=opportunity.polymarket_yes_price,
-            polymarket_no_price=opportunity.polymarket_no_price,
-            spread_yes=opportunity.spread_yes,
-            spread_no=opportunity.spread_no,
-            hedged_sum_k_yes_p_no=opportunity.hedged_sum_k_yes_p_no,
-            hedged_sum_k_no_p_yes=opportunity.hedged_sum_k_no_p_yes,
-            best_strategy=opportunity.best_strategy,
-            gross_profit=opportunity.gross_profit,
-            estimated_fees=opportunity.estimated_fees,
-            net_profit=opportunity.net_profit,
+            kalshi_yes_price=k_yes,
+            kalshi_no_price=k_no,
+            polymarket_yes_price=p_yes,
+            polymarket_no_price=p_no,
+            spread_yes=k_yes - p_yes,
+            spread_no=k_no - p_no,
+            hedged_sum_k_yes_p_no=k_yes + p_no,
+            hedged_sum_k_no_p_yes=k_no + p_yes,
+            best_strategy=opportunity.trade_instructions.get("strategy", ""),
+            gross_profit=opportunity.gross_spread,
+            estimated_fees=(opportunity.kalshi_fee_rate + opportunity.polymarket_fee_rate) * opportunity.gross_spread,
+            net_profit=opportunity.net_profit_per_share,
             roi_percent=opportunity.roi_percent,
             liquidity_score=opportunity.liquidity_score,
             volume_score=opportunity.volume_score,
             confidence_score=opportunity.confidence_score,
-            min_liquidity=opportunity.min_liquidity,
-            min_volume=opportunity.min_volume,
+            min_liquidity=opportunity.available_liquidity,
+            min_volume=0.0,  # Not directly available in enhanced calculator
             warnings=opportunity.warnings,
         )
 

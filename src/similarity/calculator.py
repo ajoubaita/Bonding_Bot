@@ -66,6 +66,13 @@ def check_hard_constraints(
     # 4. Outcome incompatibility
     if score_outcome == 0.0:
         violations.append("outcome_incompatible")
+    
+    # 5. Direction mismatch (e.g., "over 45.5" vs "under 45.5")
+    from src.normalization.text_cleaner import detect_direction_mismatch
+    title_k = market_k.clean_title or market_k.raw_title or ""
+    title_p = market_p.clean_title or market_p.raw_title or ""
+    if detect_direction_mismatch(title_k, title_p):
+        violations.append("direction_mismatch: opposite directions detected (e.g., over vs under)")
 
     if violations:
         logger.info(

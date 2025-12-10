@@ -1,8 +1,9 @@
 """Text cleaning and normalization utilities."""
 
 import re
-from typing import Optional
+from typing import Optional, Set
 import structlog
+from difflib import SequenceMatcher
 
 logger = structlog.get_logger()
 
@@ -192,3 +193,90 @@ def clean_description(description: str) -> str:
         Cleaned description
     """
     return clean_text(description, expand_abbr=True)
+
+
+def extract_key_terms(text: str, min_length: int = 3) -> Set[str]:
+    """Extract key terms from text for fuzzy matching.
+    
+    Removes common stopwords and extracts meaningful terms.
+    
+    Args:
+        text: Input text
+        min_length: Minimum term length
+        
+    Returns:
+        Set of key terms
+    """
+    if not text:
+        return set()
+    
+    # Common stopwords to remove
+    stopwords = {
+        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+        "of", "with", "by", "from", "as", "is", "was", "are", "were", "be",
+        "been", "being", "have", "has", "had", "do", "does", "did", "will",
+        "would", "should", "could", "may", "might", "must", "can", "this",
+        "that", "these", "those", "what", "which", "who", "when", "where",
+        "why", "how", "will", "be", "by", "end", "of", "on", "in", "at",
+    }
+    
+    # Tokenize and clean
+    words = re.findall(r'\b\w+\b', text.lower())
+    terms = {w for w in words if len(w) >= min_length and w not in stopwords}
+    
+    return terms
+
+
+def fuzzy_match_ratio(text1: str, text2: str) -> float:
+    """Calculate fuzzy match ratio between two texts.
+    
+    Uses SequenceMatcher for similarity scoring.
+    
+    Args:
+        text1: First text
+        text2: Second text
+        
+    Returns:
+        Similarity ratio [0, 1]
+    """
+    if not text1 or not text2:
+        return 0.0
+    
+    return SequenceMatcher(None, text1.lower(), text2.lower()).ratio()
+
+
+def detect_direction_mismatch(title1: str, title2: str) -> bool:
+    """Detect if two titles have opposite directions (e.g., "over" vs "under").
+    
+    Args:
+        title1: First title
+        title2: Second title
+        
+    Returns:
+        True if directions are opposite
+    """
+    if not title1 or not title2:
+        return False
+    
+    title1_lower = title1.lower()
+    title2_lower = title2.lower()
+    
+    # Directional pairs
+    direction_pairs = [
+        ("over", "under"), ("above", "below"), ("higher", "lower"),
+        ("greater", "less"), ("more", "less"), ("exceed", "below"),
+        ("wins", "loses"), ("win", "lose"), ("beat", "lose to"),
+        ("yes", "no"), ("will", "won't"), ("will not", "will"),
+    ]
+    
+    for dir1, dir2 in direction_pairs:
+        has_dir1_1 = dir1 in title1_lower
+        has_dir2_1 = dir2 in title1_lower
+        has_dir1_2 = dir1 in title2_lower
+        has_dir2_2 = dir2 in title2_lower
+        
+        # Check for opposite directions
+        if (has_dir1_1 and has_dir2_2) or (has_dir2_1 and has_dir1_2):
+            return True
+    
+    return False

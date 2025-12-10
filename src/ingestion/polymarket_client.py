@@ -447,6 +447,31 @@ class PolymarketCLOBClient:
 
         logger.debug("clob_get_markets", params=params)
         return self._get("/markets", params=params)
+    
+    def get_market_order_book(self, token_id: str) -> Dict[str, Any]:
+        """Get order book for a market token.
+
+        Args:
+            token_id: CLOB token ID
+
+        Returns:
+            Order book data with bids and asks
+        """
+        logger.debug("clob_get_market_order_book", token_id=token_id)
+        # Polymarket CLOB API typically has /book endpoint
+        try:
+            return self._get(f"/book", params={"token_id": token_id})
+        except Exception as e:
+            logger.warning(
+                "clob_order_book_failed",
+                token_id=token_id,
+                error=str(e),
+            )
+            # Fallback: return empty order book
+            return {
+                "bids": [],
+                "asks": [],
+            }
 
     def enrich_market_with_prices(
         self,

@@ -57,7 +57,7 @@ class PriceUpdater:
                     ticker = market_data.get("ticker")
 
                     # Extract prices - Kalshi provides yes_bid, yes_ask, etc.
-                    # We'll use the mid-price (average of bid/ask)
+                    # Store both bid/ask and mid-price for enhanced arbitrage calculation
                     yes_bid = market_data.get("yes_bid", 0)
                     yes_ask = market_data.get("yes_ask", 0)
 
@@ -65,11 +65,17 @@ class PriceUpdater:
                     if yes_bid and yes_ask:
                         yes_price = (yes_bid + yes_ask) / 2 / 100  # Kalshi prices are in cents
                         no_price = 1.0 - yes_price
+                        # Store bid/ask in metadata for order book reconstruction
+                        bid_price = yes_bid / 100.0
+                        ask_price = yes_ask / 100.0
                     else:
                         # Fallback to last_price if available
                         last_price = market_data.get("last_price", 50) / 100
                         yes_price = last_price
                         no_price = 1.0 - last_price
+                        # Estimate bid/ask from mid
+                        bid_price = yes_price * 0.995
+                        ask_price = yes_price * 1.005
 
                     # Find market in database
                     market = db.query(Market).filter(
@@ -85,14 +91,27 @@ class PriceUpdater:
                         for outcome in outcomes:
                             if outcome.get("value") is True:  # Yes outcome
                                 outcome["price"] = yes_price
+                                outcome["bid"] = bid_price  # Store bid for enhanced calculator
+                                outcome["ask"] = ask_price  # Store ask for enhanced calculator
                             elif outcome.get("value") is False:  # No outcome
                                 outcome["price"] = no_price
+                                outcome["bid"] = 1.0 - ask_price  # No bid = 1 - Yes ask
+                                outcome["ask"] = 1.0 - bid_price  # No ask = 1 - Yes bid
 
                         market.outcome_schema = outcome_schema
                         market.updated_at = datetime.utcnow()
 
                         # Mark JSONB field as modified for SQLAlchemy
                         flag_modified(market, "outcome_schema")
+                        
+                        # Log price update
+                        from src.utils.bonding_logger import log_price_update
+                        log_price_update(
+                            platform="kalshi",
+                            market_id=ticker,
+                            price=yes_price,
+                            price_type="mid",
+                        )
 
                         updated_count += 1
 
@@ -227,6 +246,17 @@ class PriceUpdater:
 
                         # Mark JSONB field as modified for SQLAlchemy
                         flag_modified(market, "outcome_schema")
+                        
+                        # Log price update
+                        from src.utils.bonding_logger import log_price_update
+                        if outcome_prices:
+                            mid_price = float(outcome_prices[0]) if outcome_prices else 0.0
+                            log_price_update(
+                                platform="polymarket",
+                                market_id=condition_id,
+                                price=mid_price,
+                                price_type="mid",
+                            )
 
                         updated_count += 1
 
