@@ -8,43 +8,70 @@ logger = structlog.get_logger()
 
 # Event type classification rules
 EVENT_TYPE_RULES = {
+    "sports": {
+        # Put sports FIRST with higher priority and more specific keywords
+        "keywords": [
+            # Player statistics markers
+            "yards", "touchdowns", "points scored", "rushing", "passing", "receiving",
+            "rebounds", "assists", "goals", "saves", "strikeouts", "home runs",
+            # Scoring/betting terms
+            "spread", "o/u", "over", "under", "moneyline",
+            # Generic sports terms (with multi-word phrases for specificity)
+            "super bowl", "world cup", "championship", "playoffs", "playoff",
+            "game", "match", "vs", "vs.", "wins by", "score",
+            # Team types
+            "team", "club", "fc", "united",
+            # Leagues/competitions
+            "nfl", "nba", "mlb", "nhl", "mls", "premier league", "champions league",
+            "ncaa", "college football", "college basketball",
+            # Player positions
+            "quarterback", "running back", "wide receiver", "tight end",
+            "forward", "guard", "center", "pitcher", "outfielder",
+        ],
+        "categories": ["sports"],
+        "entities": ["people"],  # Athletes are people entities
+        "boost": 2,  # Give sports higher weight to prevent election misclassification
+    },
     "election": {
-        "keywords": ["election", "elect", "win", "president", "senate", "congress", "vote", "ballot"],
+        # Removed "win" to avoid sports false positives
+        "keywords": ["election", "elect", "president", "presidential", "senate", "congress",
+                     "vote", "ballot", "governor", "mayor", "representative", "democrat", "republican"],
         "categories": ["politics"],
         "entities": ["people"],
     },
     "price_target": {
-        "keywords": ["price", "reach", "hit", "above", "below", "dollar", "usd", "btc", "eth"],
+        "keywords": ["price", "reach", "hit", "above", "below", "dollar", "usd", "btc", "eth",
+                     "bitcoin", "ethereum", "crypto", "cryptocurrency", "solana", "xrp"],
         "categories": ["crypto", "finance", "stocks"],
         "entities": ["tickers"],
     },
     "rate_decision": {
-        "keywords": ["rate", "interest", "fed", "fomc", "basis points", "bps", "hike", "cut"],
+        "keywords": ["rate", "interest", "fed", "fomc", "basis points", "bps", "hike", "cut",
+                     "federal reserve", "central bank", "monetary policy"],
         "categories": ["finance", "economics"],
         "entities": ["organizations"],
     },
     "economic_indicator": {
-        "keywords": ["gdp", "inflation", "cpi", "unemployment", "jobs", "nonfarm", "payroll"],
+        "keywords": ["gdp", "inflation", "cpi", "unemployment", "jobs", "nonfarm", "payroll",
+                     "employment", "retail sales", "manufacturing"],
         "categories": ["economics", "finance"],
         "entities": ["organizations"],
     },
-    "sports": {
-        "keywords": ["super bowl", "world cup", "championship", "win", "finals", "playoffs"],
-        "categories": ["sports"],
-        "entities": ["misc"],
-    },
     "geopolitical": {
-        "keywords": ["war", "conflict", "invasion", "treaty", "sanctions", "military"],
+        "keywords": ["war", "conflict", "invasion", "treaty", "sanctions", "military",
+                     "diplomatic", "nuclear", "missile"],
         "categories": ["politics", "international"],
         "entities": ["countries"],
     },
     "corporate": {
-        "keywords": ["earnings", "revenue", "acquisition", "merger", "ceo", "ipo", "stock split"],
+        "keywords": ["earnings", "revenue", "acquisition", "merger", "ceo", "ipo", "stock split",
+                     "quarterly", "annual report", "dividend"],
         "categories": ["finance", "business"],
         "entities": ["organizations", "people"],
     },
     "regulatory": {
-        "keywords": ["approve", "ban", "regulation", "law", "sec", "ftc", "doj", "court"],
+        "keywords": ["approve", "ban", "regulation", "law", "sec", "ftc", "doj", "court",
+                     "lawsuit", "ruling", "verdict", "appeal"],
         "categories": ["politics", "legal"],
         "entities": ["organizations"],
     },
@@ -85,6 +112,10 @@ def classify_event_type(category: str, entities: Dict[str, List[str]], title: st
         for entity_type in required_entity_types:
             if entities.get(entity_type):
                 score += 1
+
+        # Apply boost multiplier if specified
+        boost = rules.get("boost", 1)
+        score = score * boost
 
         scores[event_type] = score
 

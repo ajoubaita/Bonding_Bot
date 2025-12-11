@@ -75,6 +75,48 @@ def check_hard_constraints(
     if detect_direction_mismatch(title_k, title_p):
         violations.append("direction_mismatch: opposite directions detected (e.g., over vs under)")
 
+    # 6. Entity name mismatch (CRITICAL for sports/politics/corporate)
+    # If both markets have people entities, check if they share at least one person
+    entities_k = market_k.entities or {}
+    entities_p = market_p.entities or {}
+    people_k = set(entities_k.get("people", []))
+    people_p = set(entities_p.get("people", []))
+
+    # If both have people (>= 1) but share NONE, likely different events
+    if len(people_k) >= 1 and len(people_p) >= 1:
+        shared_people = people_k.intersection(people_p)
+        if len(shared_people) == 0 and not has_exact_match:
+            violations.append(f"entity_name_mismatch: no shared people - K:{list(people_k)[:3]} vs P:{list(people_p)[:3]}")
+
+    # 7. Sports-specific: Player prop vs team outcome mismatch
+    # If event_type is sports, check for statistical markers
+    if market_k.event_type == "sports" and market_p.event_type == "sports":
+        # Statistical markers indicate player props (e.g., "200+", "yards", "touchdowns")
+        stat_markers = ["+", "yards", "points", "rushing", "passing", "receiving",
+                       "rebounds", "assists", "goals", "saves", "touchdowns"]
+
+        has_stat_k = any(marker in title_k for marker in stat_markers)
+        has_stat_p = any(marker in title_p for marker in stat_markers)
+
+        # If one is a player prop and the other is a team outcome, reject
+        # (e.g., "Mahomes 200+ yards" vs "Chiefs make playoff")
+        if has_stat_k != has_stat_p:
+            violations.append(f"sports_market_type_mismatch: stat_prop_K={has_stat_k} vs stat_prop_P={has_stat_p}")
+
+        # Also check if both have statistical markers but for different magnitudes
+        # (e.g., "200+" vs "300+" suggests different events/games)
+        if has_stat_k and has_stat_p:
+            # Extract numbers from titles
+            import re
+            numbers_k = set(re.findall(r'\d+', title_k))
+            numbers_p = set(re.findall(r'\d+', title_p))
+
+            # If they have numbers but share NONE, likely different stat lines/games
+            if numbers_k and numbers_p and not numbers_k.intersection(numbers_p):
+                # Allow if text similarity is very high (might be same event, different notation)
+                if score_text < 0.70:
+                    violations.append(f"sports_stat_mismatch: different numbers - K:{numbers_k} vs P:{numbers_p}")
+
     if violations:
         logger.info(
             "hard_constraints_violated",
