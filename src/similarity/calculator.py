@@ -46,10 +46,11 @@ def check_hard_constraints(
     # Hard constraint checks
     violations = []
 
-    # 0. Category mismatch (CRITICAL: don't match sports with politics)
-    if market_k.category and market_p.category:
-        if market_k.category != market_p.category:
-            violations.append(f"category_mismatch: {market_k.category} != {market_p.category}")
+    # 0. Event type mismatch (CRITICAL: don't match sports with politics)
+    # Use event_type instead of category since category is not populated by APIs
+    if market_k.event_type and market_p.event_type:
+        if market_k.event_type != market_p.event_type:
+            violations.append(f"event_type_mismatch: {market_k.event_type} != {market_p.event_type}")
 
     # 1. Text similarity too low
     if score_text < settings.hard_constraint_min_text_score:
