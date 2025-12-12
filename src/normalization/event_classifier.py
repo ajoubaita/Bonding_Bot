@@ -47,10 +47,34 @@ EVENT_TYPE_RULES = {
             "forward", "guard", "center", "pitcher", "outfielder",
             # Sports-specific verbs
             "draft pick", "traded to", "signed with", "free agent",
+            # NFL Teams (all 32 teams - city names and nicknames)
+            "buffalo bills", "miami dolphins", "new england patriots", "new york jets",
+            "baltimore ravens", "cincinnati bengals", "cleveland browns", "pittsburgh steelers",
+            "houston texans", "indianapolis colts", "jacksonville jaguars", "tennessee titans",
+            "denver broncos", "kansas city chiefs", "las vegas raiders", "los angeles chargers",
+            "dallas cowboys", "new york giants", "philadelphia eagles", "washington commanders",
+            "chicago bears", "detroit lions", "green bay packers", "minnesota vikings",
+            "atlanta falcons", "carolina panthers", "new orleans saints", "tampa bay buccaneers",
+            "arizona cardinals", "los angeles rams", "san francisco 49ers", "seattle seahawks",
+            # NFL city shortcuts (match city-only references)
+            "buffalo", "miami", "new england", "baltimore", "cincinnati", "cleveland", "pittsburgh",
+            "houston", "indianapolis", "jacksonville", "tennessee", "denver", "kansas city",
+            "las vegas", "dallas", "philadelphia", "washington", "chicago", "detroit",
+            "green bay", "minnesota", "atlanta", "carolina", "new orleans", "tampa bay",
+            "arizona", "seattle", "san francisco",
+            # NBA Teams (all 30 teams)
+            "boston celtics", "brooklyn nets", "new york knicks", "philadelphia 76ers", "toronto raptors",
+            "chicago bulls", "cleveland cavaliers", "detroit pistons", "indiana pacers", "milwaukee bucks",
+            "atlanta hawks", "charlotte hornets", "miami heat", "orlando magic", "washington wizards",
+            "denver nuggets", "minnesota timberwolves", "oklahoma city thunder", "portland trail blazers", "utah jazz",
+            "golden state warriors", "los angeles clippers", "los angeles lakers", "phoenix suns", "sacramento kings",
+            "dallas mavericks", "houston rockets", "memphis grizzlies", "new orleans pelicans", "san antonio spurs",
+            # Player prop patterns (statistical markers)
+            "over ", "under ", "o/u ", "+", "total", "prop",
         ],
         "categories": ["sports"],
         "entities": ["people"],  # Athletes are people entities
-        "boost": 2,  # Boost to prevent election misclassification
+        "boost": 4,  # Increased from 2 to override entertainment's 3x boost
         # CRITICAL: Exclude sports if these keywords appear
         "exclusions": [
             # Awards/Entertainment
