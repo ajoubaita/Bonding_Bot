@@ -125,9 +125,9 @@ class Settings(BaseSettings):
     )
 
     # Tier 1 Additional Requirements
-    # Based on production data: text ~0.62, time ~0.01-0.06, outcome ~1.0, resolution ~0.3
+    # UPDATED: Increased text similarity requirement to prevent cross-sport bonding (NFL↔NHL)
     # Time alignment scoring is exponential - even 20-day deltas only score 0.05
-    tier1_min_text_score: float = Field(default=0.60)  # Production shows 0.62-0.63
+    tier1_min_text_score: float = Field(default=0.75)  # Increased from 0.60 to prevent false positives
     tier1_min_outcome_score: float = Field(default=0.90)  # Most markets show 1.0 - keep strict
     tier1_min_time_score: float = Field(default=0.01)  # Exponential decay - 0.85 was unrealistic
     tier1_min_resolution_score: float = Field(default=0.20)  # Production shows 0.3 when present

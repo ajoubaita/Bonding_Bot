@@ -117,6 +117,30 @@ def check_hard_constraints(
                 if score_text < 0.70:
                     violations.append(f"sports_stat_mismatch: different numbers - K:{numbers_k} vs P:{numbers_p}")
 
+    # 8. CRITICAL: Sport type mismatch (prevent NFL ↔ NHL ↔ NBA ↔ MLB bonding)
+    # Detect sport types dynamically from titles
+    from src.normalization.event_classifier import classify_sport_type
+    if market_k.event_type == "sports" and market_p.event_type == "sports":
+        sport_type_k = classify_sport_type(title_k)
+        sport_type_p = classify_sport_type(title_p)
+
+        # If both have detected sport types, they MUST match
+        if sport_type_k and sport_type_p and sport_type_k != sport_type_p:
+            violations.append(f"sport_type_mismatch: {sport_type_k} != {sport_type_p}")
+
+    # 9. CRITICAL: Parlay market blocking (multi-game markets cannot bond with single-game)
+    from src.normalization.event_classifier import detect_parlay_market
+    is_parlay_k = detect_parlay_market(title_k)
+    is_parlay_p = detect_parlay_market(title_p)
+
+    # If one is parlay and other is not, reject
+    if is_parlay_k != is_parlay_p:
+        violations.append(f"parlay_mismatch: K_parlay={is_parlay_k} vs P_parlay={is_parlay_p}")
+
+    # If both are parlays, require very high text similarity (should be exact same combo)
+    if is_parlay_k and is_parlay_p and score_text < 0.85:
+        violations.append(f"parlay_text_too_low: both parlays but text_score={score_text:.3f} < 0.85")
+
     if violations:
         logger.info(
             "hard_constraints_violated",

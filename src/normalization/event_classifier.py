@@ -1,6 +1,6 @@
 """Event type and geo scope classification."""
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 import structlog
 
 logger = structlog.get_logger()
@@ -247,6 +247,134 @@ def classify_event_type(category: str, entities: Dict[str, List[str]], title: st
         title_preview=title[:50],
     )
     return "general"
+
+
+def classify_sport_type(title: str) -> Optional[str]:
+    """Detect specific sport type (NFL, NHL, NBA, MLB, etc.).
+
+    Args:
+        title: Clean market title
+
+    Returns:
+        Sport type string or None if not sports
+    """
+    title_lower = title.lower()
+
+    # NFL markers (most distinctive first)
+    nfl_markers = [
+        # NFL-specific terms
+        "nfl", "super bowl", "quarterback", "qb", "running back", "wide receiver",
+        "tight end", "yards", "touchdowns", "passing yards", "rushing yards",
+        "receiving yards", "field goal", "touchdown", "afc", "nfc",
+        # NFL teams
+        "bills", "dolphins", "patriots", "jets", "ravens", "bengals", "browns",
+        "steelers", "texans", "colts", "jaguars", "titans", "broncos", "chiefs",
+        "raiders", "chargers", "cowboys", "giants", "eagles", "commanders",
+        "bears", "lions", "packers", "vikings", "falcons", "panthers", "saints",
+        "buccaneers", "cardinals", "rams", "49ers", "seahawks"
+    ]
+
+    # NHL markers
+    nhl_markers = [
+        # NHL-specific terms
+        "nhl", "stanley cup", "hockey", "puck", "goalie", "hat trick",
+        "power play", "shootout", "overtime goal", "ice hockey",
+        # NHL teams (distinctive names that won't overlap with NFL)
+        "avalanche", "flames", "oilers", "canucks", "maple leafs", "senators",
+        "canadiens", "bruins", "sabres", "red wings", "blackhawks", "blues",
+        "predators", "jets", "wild", "penguins", "capitals", "blue jackets",
+        "hurricanes", "devils", "islanders", "rangers", "flyers", "sharks",
+        "ducks", "kings", "golden knights", "coyotes", "kraken", "lightning",
+        "panthers"
+    ]
+
+    # NBA markers
+    nba_markers = [
+        # NBA-specific terms
+        "nba", "basketball", "three-pointer", "free throw", "rebounds",
+        "assists", "blocks", "steals", "dunks", "playoff series",
+        # NBA teams
+        "celtics", "nets", "knicks", "76ers", "raptors", "bulls", "cavaliers",
+        "pistons", "pacers", "bucks", "hawks", "hornets", "heat", "magic",
+        "wizards", "nuggets", "timberwolves", "thunder", "trail blazers", "jazz",
+        "warriors", "clippers", "lakers", "suns", "kings", "mavericks", "rockets",
+        "grizzlies", "pelicans", "spurs"
+    ]
+
+    # MLB markers
+    mlb_markers = [
+        # MLB-specific terms
+        "mlb", "baseball", "home run", "strikeout", "innings", "pitcher",
+        "batting average", "rbi", "world series", "playoff game",
+        # MLB teams (distinctive names)
+        "yankees", "red sox", "orioles", "rays", "blue jays", "white sox",
+        "guardians", "tigers", "royals", "twins", "astros", "angels", "athletics",
+        "mariners", "mets", "phillies", "braves", "marlins", "nationals", "cubs",
+        "brewers", "pirates", "reds", "rockies", "dodgers", "padres", "giants",
+        "diamondbacks", "rangers"
+    ]
+
+    # Count markers for each sport
+    nfl_count = sum(1 for marker in nfl_markers if marker in title_lower)
+    nhl_count = sum(1 for marker in nhl_markers if marker in title_lower)
+    nba_count = sum(1 for marker in nba_markers if marker in title_lower)
+    mlb_count = sum(1 for marker in mlb_markers if marker in title_lower)
+
+    # Return sport with most markers
+    counts = {
+        "NFL": nfl_count,
+        "NHL": nhl_count,
+        "NBA": nba_count,
+        "MLB": mlb_count,
+    }
+
+    max_count = max(counts.values())
+    if max_count >= 1:
+        # Get sport with highest count
+        for sport, count in counts.items():
+            if count == max_count:
+                return sport
+
+    # Default to None if no clear sport detected
+    return None
+
+
+def detect_parlay_market(title: str) -> bool:
+    """Detect if market is a parlay (multi-game/multi-outcome market).
+
+    Args:
+        title: Clean market title
+
+    Returns:
+        True if market appears to be a parlay
+    """
+    title_lower = title.lower()
+
+    # Parlay indicators
+    parlay_keywords = [
+        "parlay", "multi-game", "multigame", "both teams", "all teams",
+        "and", " & ", "combo", "combined", "multiple games"
+    ]
+
+    # Check for explicit parlay keywords
+    if any(keyword in title_lower for keyword in parlay_keywords):
+        return True
+
+    # Check for multiple team names (indicates multi-game parlay)
+    # Count occurrences of outcome separators
+    outcome_separators = title_lower.count(",yes ") + title_lower.count(", yes ")
+    outcome_separators += title_lower.count(",no ") + title_lower.count(", no ")
+
+    # If 3+ outcome separators, likely a parlay
+    if outcome_separators >= 3:
+        return True
+
+    # Check for multiple "vs" or "vs." (multiple games)
+    vs_count = title_lower.count(" vs ") + title_lower.count(" vs. ")
+    if vs_count >= 2:
+        return True
+
+    return False
 
 
 def determine_geo_scope(entities: Dict[str, List[str]], title: str) -> str:
