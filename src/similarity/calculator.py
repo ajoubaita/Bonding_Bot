@@ -150,15 +150,31 @@ def check_hard_constraints(
         quotes_k = re.findall(r'"([^"]+)"', title_k)
         quotes_p = re.findall(r'"([^"]+)"', title_p)
 
-        # If both have quoted names, they should overlap
-        if quotes_k and quotes_p:
-            # Normalize to lowercase for comparison
-            names_k = set(q.lower() for q in quotes_k)
-            names_p = set(q.lower() for q in quotes_p)
+        # Also extract show/movie names before "rotten tomatoes" or "score"
+        # Pattern: capture text before " rotten" or " score"
+        pattern = r'^(.+?)(?:\s+rotten|\s+score)'
+        match_k = re.search(pattern, title_k, re.IGNORECASE)
+        match_p = re.search(pattern, title_p, re.IGNORECASE)
 
-            # Check if they share at least one quoted name
+        # Collect all possible show names
+        names_k = set()
+        names_p = set()
+
+        if quotes_k:
+            names_k.update(q.lower().strip() for q in quotes_k)
+        if match_k:
+            names_k.add(match_k.group(1).lower().strip())
+
+        if quotes_p:
+            names_p.update(q.lower().strip() for q in quotes_p)
+        if match_p:
+            names_p.add(match_p.group(1).lower().strip())
+
+        # If we extracted names from both markets, they must overlap
+        if names_k and names_p:
+            # Check if they share at least one show/movie name
             if not names_k.intersection(names_p):
-                violations.append(f"entertainment_name_mismatch: different shows/movies - K:{quotes_k[:2]} vs P:{quotes_p[:2]}")
+                violations.append(f"entertainment_name_mismatch: different shows/movies - K:{list(names_k)[:2]} vs P:{list(names_p)[:2]}")
 
     if violations:
         logger.info(
