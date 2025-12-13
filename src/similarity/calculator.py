@@ -141,6 +141,25 @@ def check_hard_constraints(
     if is_parlay_k and is_parlay_p and score_text < 0.85:
         violations.append(f"parlay_text_too_low: both parlays but text_score={score_text:.3f} < 0.85")
 
+    # 10. CRITICAL: Entertainment market show/movie name matching
+    # For entertainment markets, extract quoted show/movie names and ensure they match
+    if market_k.event_type == "entertainment" and market_p.event_type == "entertainment":
+        import re
+
+        # Extract quoted strings (show/movie names typically in quotes)
+        quotes_k = re.findall(r'"([^"]+)"', title_k)
+        quotes_p = re.findall(r'"([^"]+)"', title_p)
+
+        # If both have quoted names, they should overlap
+        if quotes_k and quotes_p:
+            # Normalize to lowercase for comparison
+            names_k = set(q.lower() for q in quotes_k)
+            names_p = set(q.lower() for q in quotes_p)
+
+            # Check if they share at least one quoted name
+            if not names_k.intersection(names_p):
+                violations.append(f"entertainment_name_mismatch: different shows/movies - K:{quotes_k[:2]} vs P:{quotes_p[:2]}")
+
     if violations:
         logger.info(
             "hard_constraints_violated",

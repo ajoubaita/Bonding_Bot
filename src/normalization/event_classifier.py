@@ -361,12 +361,13 @@ def detect_parlay_market(title: str) -> bool:
         return True
 
     # Check for multiple team names (indicates multi-game parlay)
-    # Count occurrences of outcome separators
-    outcome_separators = title_lower.count(",yes ") + title_lower.count(", yes ")
-    outcome_separators += title_lower.count(",no ") + title_lower.count(", no ")
+    # Count occurrences of outcome separators (with or without spaces)
+    outcome_separators = title_lower.count(",yes") + title_lower.count(", yes")
+    outcome_separators += title_lower.count(",no") + title_lower.count(", no")
 
     # If 3+ outcome separators, likely a parlay
-    if outcome_separators >= 3:
+    # NOTE: Lowered from 3 to 2 to catch 2-game parlays
+    if outcome_separators >= 2:
         return True
 
     # Check for multiple "vs" or "vs." (multiple games)
