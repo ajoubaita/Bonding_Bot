@@ -29,9 +29,11 @@ EVENT_TYPE_RULES = {
     "sports": {
         # SECOND: Sports with strong exclusion rules
         "keywords": [
-            # Player statistics markers
-            "yards", "touchdowns", "points scored", "rushing", "passing", "receiving",
-            "rebounds", "assists", "goals", "saves", "strikeouts", "home runs",
+            # Player statistics markers (include both singular and plural)
+            "yard", "yards", "touchdown", "touchdowns", "point scored", "points scored",
+            "rushing", "passing", "receiving", "reception", "receptions",
+            "rebound", "rebounds", "assist", "assists", "goal", "goals", "save", "saves",
+            "strikeout", "strikeouts", "home run", "home runs",
             # Scoring/betting terms
             "spread", "o/u", "over", "under", "moneyline",
             # Generic sports terms (with multi-word phrases for specificity)
@@ -74,7 +76,7 @@ EVENT_TYPE_RULES = {
         ],
         "categories": ["sports"],
         "entities": ["people"],  # Athletes are people entities
-        "boost": 4,  # Increased from 2 to override entertainment's 3x boost
+        "boost": 5,  # Increased from 4 to strongly prioritize sports when keywords present
         # CRITICAL: Exclude sports if these keywords appear
         "exclusions": [
             # Awards/Entertainment
