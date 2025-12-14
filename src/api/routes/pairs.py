@@ -226,7 +226,7 @@ async def get_bonded_pairs(
 async def get_bond_registry(
     tier: Optional[int] = Query(None, description="Filter by tier"),
     status_filter: str = Query("active", description="Filter by status"),
-    min_volume: float = Query(10000.0, description="Minimum trading volume (default $10k)"),
+    min_volume: float = Query(1000.0, description="Minimum trading volume (default $1k)"),
     include_arbitrage: bool = Query(True, description="Include arbitrage analysis"),
     limit: int = Query(100, description="Page size"),
     offset: int = Query(0, description="Page offset"),
