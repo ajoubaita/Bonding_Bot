@@ -217,7 +217,7 @@ class PriceUpdater:
 
                     # Find market in database by condition_id
                     market = db.query(Market).filter(
-                        Market.id == condition_id,
+                        Market.condition_id == condition_id,
                         Market.platform == "polymarket"
                     ).first()
 
