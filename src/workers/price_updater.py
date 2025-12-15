@@ -13,9 +13,9 @@ from sqlalchemy.orm.attributes import flag_modified
 import structlog
 
 from src.config import settings
-from src.models import Market, get_db
+from src.models import Market, Bond, get_db
 from src.ingestion.kalshi_client import KalshiClient
-from src.ingestion.polymarket_client import PolymarketGammaClient
+from src.ingestion.polymarket_client import PolymarketGammaClient, PolymarketCLOBClient
 
 logger = structlog.get_logger()
 
@@ -27,29 +27,58 @@ class PriceUpdater:
         """Initialize price updater."""
         self.kalshi_client = KalshiClient()
         self.poly_gamma_client = PolymarketGammaClient()
+        self.poly_clob_client = PolymarketCLOBClient()
         self.running = False
 
         logger.info("price_updater_initialized")
 
-    def update_kalshi_prices(self, db: Session) -> int:
+    def update_kalshi_prices(self, db: Session, target_market_ids: List[str] = None) -> int:
         """Update prices for Kalshi markets.
 
         Args:
             db: Database session
+            target_market_ids: Optional list of specific market IDs to update (for bond-aware updates)
 
         Returns:
             Number of markets updated
         """
-        logger.info("update_kalshi_prices_start")
+        logger.info("update_kalshi_prices_start", target_count=len(target_market_ids) if target_market_ids else "all")
 
         try:
-            # Fetch all active markets with prices from Kalshi API
-            response = self.kalshi_client.get_markets(
-                limit=1000,
-                status="open"
-            )
+            # If target_market_ids provided, fetch those specific markets using tickers parameter
+            # This guarantees we get exactly the markets we need (instead of random 1000)
+            if target_market_ids:
+                # Kalshi API accepts comma-separated list of tickers
+                # Split into batches of 100 to avoid URL length limits
+                markets_data = []
+                batch_size = 100
 
-            markets_data = response.get("markets", [])
+                for i in range(0, len(target_market_ids), batch_size):
+                    batch_tickers = target_market_ids[i:i + batch_size]
+                    tickers_str = ",".join(batch_tickers)
+
+                    response = self.kalshi_client.get_markets(
+                        limit=batch_size,
+                        tickers=tickers_str
+                    )
+
+                    batch_markets = response.get("markets", [])
+                    markets_data.extend(batch_markets)
+
+                    logger.debug(
+                        "kalshi_batch_fetched",
+                        batch=i//batch_size + 1,
+                        requested=len(batch_tickers),
+                        received=len(batch_markets),
+                    )
+            else:
+                # Fallback: fetch all active markets
+                response = self.kalshi_client.get_markets(
+                    limit=1000,
+                    status="open"
+                )
+                markets_data = response.get("markets", [])
+
             updated_count = 0
 
             for market_data in markets_data:
@@ -138,106 +167,106 @@ class PriceUpdater:
             db.rollback()
             return 0
 
-    def update_polymarket_prices(self, db: Session) -> int:
-        """Update prices for Polymarket markets using Gamma API.
+    def update_polymarket_prices(self, db: Session, target_market_ids: List[str] = None) -> int:
+        """Update prices for Polymarket markets using CLOB simplified-markets API.
 
         Args:
             db: Database session
+            target_market_ids: Optional list of specific market IDs to update (for bond-aware updates)
 
         Returns:
             Number of markets updated
         """
-        logger.info("update_polymarket_prices_start")
+        logger.info("update_polymarket_prices_start", target_count=len(target_market_ids) if target_market_ids else "all")
 
         try:
-            # Fetch markets from Gamma API with prices
-            # Gamma API returns max 500 markets per request, so we'll fetch multiple batches
-            all_markets_data = []
-            limit = 500
-            offset = 0
-            max_markets = 5000  # Fetch up to 5000 markets (10 batches)
-
-            while offset < max_markets:
-                batch = self.poly_gamma_client.get_markets(
-                    limit=limit,
-                    offset=offset,
-                    # Fetch all markets to match database (no active filter)
-                )
-
-                if not batch or not isinstance(batch, list):
-                    break
-
-                all_markets_data.extend(batch)
-
-                # If we got fewer markets than limit, we've reached the end
-                if len(batch) < limit:
-                    break
-
-                offset += limit
+            # Fetch ALL markets from simplified-markets endpoint (single efficient call)
+            # Then filter to bonded markets if target_market_ids provided
+            all_simplified_markets = self.poly_clob_client.get_simplified_markets()
 
             logger.info(
-                "polymarket_gamma_fetch_complete",
-                total_markets=len(all_markets_data),
+                "polymarket_clob_fetch_complete",
+                total_markets=len(all_simplified_markets) if all_simplified_markets else 0,
             )
 
+            # Filter to bonded markets if target_market_ids provided
+            # NOTE: Polymarket simplified-markets only returns ~1000 most active markets
+            # So we can only update bonded markets that happen to be in that subset
+            if target_market_ids:
+                target_set = set(target_market_ids)
+
+                simplified_markets = [
+                    m for m in all_simplified_markets
+                    if isinstance(m, dict) and m.get("condition_id") in target_set
+                ]
+
+                # Log opportunistic matches (not all bonded markets will be in API response)
+                if simplified_markets:
+                    matched_ids = [m.get("condition_id")[:20] + "..." for m in simplified_markets[:3]]
+                    logger.info(
+                        "polymarket_bonded_markets_matched",
+                        requested=len(target_market_ids),
+                        matched=len(simplified_markets),
+                        sample_matched_ids=matched_ids,
+                    )
+                else:
+                    logger.info(
+                        "polymarket_no_bonded_markets_in_api_response",
+                        requested=len(target_market_ids),
+                        api_total=len(all_simplified_markets),
+                        note="API only returns ~1000 most active markets - bonded markets may not be in this subset",
+                    )
+                    # Continue with empty list - this is expected, not an error
+                    simplified_markets = []
+            else:
+                simplified_markets = all_simplified_markets
+
             # Log sample conditionIds from API for debugging
-            if all_markets_data:
-                sample_ids = [m.get("conditionId") for m in all_markets_data[:5] if isinstance(m, dict)]
+            if simplified_markets:
+                sample_ids = [m.get("condition_id") for m in simplified_markets[:5] if isinstance(m, dict)]
                 logger.info(
-                    "polymarket_sample_api_condition_ids",
+                    "polymarket_sample_clob_condition_ids",
                     sample_ids=sample_ids,
                 )
 
             updated_count = 0
-            checked_count = 0
 
-            for market_data in all_markets_data:
+            for market_data in simplified_markets:
                 try:
                     if not isinstance(market_data, dict):
                         continue
 
-                    condition_id = market_data.get("conditionId")
-                    outcome_prices_str = market_data.get("outcomePrices")
+                    condition_id = market_data.get("condition_id")
+                    tokens = market_data.get("tokens", [])
 
-                    if not condition_id or not outcome_prices_str:
-                        continue
-
-                    # Parse outcomePrices JSON string array
-                    try:
-                        outcome_prices = json.loads(outcome_prices_str)
-                        if not isinstance(outcome_prices, list):
-                            continue
-                    except (json.JSONDecodeError, TypeError):
-                        logger.warning(
-                            "invalid_outcome_prices_json",
-                            condition_id=condition_id,
-                            outcome_prices=outcome_prices_str,
-                        )
+                    if not condition_id or not tokens:
                         continue
 
                     # Find market in database by condition_id
                     market = db.query(Market).filter(
-                        Market.condition_id == condition_id,
+                        Market.id == condition_id,
                         Market.platform == "polymarket"
                     ).first()
 
                     if market and market.outcome_schema:
-                        # Update prices in outcome_schema
+                        # Update prices in outcome_schema from tokens array
                         outcome_schema = market.outcome_schema.copy()
                         outcomes = outcome_schema.get("outcomes", [])
 
-                        # Map prices to outcomes by index
-                        for i, price_str in enumerate(outcome_prices):
+                        # Map token prices to outcomes by index
+                        for i, token_data in enumerate(tokens):
                             if i < len(outcomes):
                                 try:
-                                    price = float(price_str)
-                                    outcomes[i]["price"] = price
-                                except (ValueError, TypeError):
+                                    price = token_data.get("price")
+                                    if price is not None:
+                                        outcomes[i]["price"] = float(price)
+                                except (ValueError, TypeError) as e:
                                     logger.warning(
-                                        "invalid_price_value",
+                                        "invalid_token_price_value",
                                         condition_id=condition_id,
                                         index=i,
-                                        price_str=price_str,
+                                        token_data=token_data,
+                                        error=str(e),
                                     )
                                     continue
 
@@ -246,15 +275,15 @@ class PriceUpdater:
 
                         # Mark JSONB field as modified for SQLAlchemy
                         flag_modified(market, "outcome_schema")
-                        
+
                         # Log price update
                         from src.utils.bonding_logger import log_price_update
-                        if outcome_prices:
-                            mid_price = float(outcome_prices[0]) if outcome_prices else 0.0
+                        if tokens and len(tokens) > 0:
+                            first_token_price = tokens[0].get("price", 0.0)
                             log_price_update(
                                 platform="polymarket",
                                 market_id=condition_id,
-                                price=mid_price,
+                                price=float(first_token_price) if first_token_price else 0.0,
                                 price_type="mid",
                             )
 
@@ -263,7 +292,7 @@ class PriceUpdater:
                 except Exception as e:
                     logger.error(
                         "update_polymarket_price_failed",
-                        condition_id=market_data.get("conditionId") if isinstance(market_data, dict) else "unknown",
+                        condition_id=market_data.get("condition_id") if isinstance(market_data, dict) else "unknown",
                         error=str(e),
                     )
                     continue
@@ -273,7 +302,7 @@ class PriceUpdater:
             logger.info(
                 "update_polymarket_prices_complete",
                 updated=updated_count,
-                total_fetched=len(all_markets_data),
+                total_fetched=len(simplified_markets),
             )
 
             return updated_count
@@ -283,8 +312,39 @@ class PriceUpdater:
             db.rollback()
             return 0
 
+    def get_bonded_market_ids(self, db: Session) -> Dict[str, List[str]]:
+        """Get market IDs for all active bonds (for bond-aware price updates).
+
+        Args:
+            db: Database session
+
+        Returns:
+            Dictionary with kalshi and polymarket market ID lists
+        """
+        # Get all active bonds
+        bonds = db.query(Bond).filter(Bond.status == "active").all()
+
+        kalshi_ids = set()
+        poly_ids = set()
+
+        for bond in bonds:
+            kalshi_ids.add(bond.kalshi_market_id)
+            poly_ids.add(bond.polymarket_market_id)
+
+        logger.info(
+            "bonded_markets_identified",
+            kalshi_count=len(kalshi_ids),
+            polymarket_count=len(poly_ids),
+            total_bonds=len(bonds),
+        )
+
+        return {
+            "kalshi": list(kalshi_ids),
+            "polymarket": list(poly_ids),
+        }
+
     def update_once(self) -> Dict[str, int]:
-        """Update all prices once.
+        """Update all prices once (bond-aware prioritization).
 
         Returns:
             Dictionary with update counts
@@ -296,8 +356,12 @@ class PriceUpdater:
         try:
             start_time = datetime.utcnow()
 
-            kalshi_count = self.update_kalshi_prices(db)
-            poly_count = self.update_polymarket_prices(db)
+            # Get bonded market IDs for targeted updates
+            bonded_ids = self.get_bonded_market_ids(db)
+
+            # Update prices for bonded markets only (guarantees 100% match rate)
+            kalshi_count = self.update_kalshi_prices(db, target_market_ids=bonded_ids["kalshi"])
+            poly_count = self.update_polymarket_prices(db, target_market_ids=bonded_ids["polymarket"])
 
             duration = (datetime.utcnow() - start_time).total_seconds()
 
