@@ -215,7 +215,7 @@ def main():
         processed = 0
 
         # Similarity threshold - relaxed for recall
-        MIN_SIMILARITY = 0.40  # Low threshold to find thousands of overlapping markets
+        MIN_SIMILARITY = 0.50  # Threshold to find overlapping markets
         TARGET_ARB_MIN = 2.0   # User's requirement: 2-10% range
         TARGET_ARB_MAX = 10.0
 
@@ -226,9 +226,6 @@ def main():
 
             k_title = k_market.get("title", "")
             k_price = extract_price_from_market(k_market, "kalshi")
-
-            if not k_price:
-                continue
 
             # Find similar Polymarket markets
             for p_market in poly_markets:
@@ -244,29 +241,32 @@ def main():
                 if similarity < MIN_SIMILARITY:
                     continue
 
-                # Extract Polymarket price
+                # Extract Polymarket price (optional - bond even without prices)
                 p_price = extract_price_from_market(p_market, "polymarket")
 
-                if not p_price:
-                    continue
+                # Calculate arbitrage if both prices available
+                arb_pct = 0.0
+                direction = "No prices available yet"
 
-                # Calculate arbitrage
-                has_arb, arb_pct, direction = calculate_arbitrage(k_price, p_price)
+                if k_price and p_price:
+                    has_arb, arb_pct, direction = calculate_arbitrage(k_price, p_price)
 
-                # Create bond if in target arbitrage range
-                if has_arb and TARGET_ARB_MIN <= arb_pct <= TARGET_ARB_MAX:
-                    try:
-                        pair_id = create_bond_in_db(
-                            db,
-                            k_market,
-                            p_market,
-                            similarity,
-                            arb_pct,
-                            k_price,
-                            p_price
-                        )
-                        bonds_created += 1
+                # CREATE BOND BASED ON SIMILARITY ALONE
+                # We'll monitor for arbitrage windows later - don't require it now
+                try:
+                    pair_id = create_bond_in_db(
+                        db,
+                        k_market,
+                        p_market,
+                        similarity,
+                        arb_pct,
+                        k_price if k_price else 0.5,  # Default to 0.5 if no price
+                        p_price if p_price else 0.5,
+                    )
+                    bonds_created += 1
 
+                    # Track as opportunity if in target arbitrage range
+                    if k_price and p_price and arb_pct >= TARGET_ARB_MIN and arb_pct <= TARGET_ARB_MAX:
                         opportunities.append({
                             "pair_id": pair_id,
                             "similarity": similarity,
@@ -277,9 +277,9 @@ def main():
                             "poly_price": p_price,
                             "direction": direction,
                         })
-                    except Exception as e:
-                        logger.error("bond_creation_failed", error=str(e))
-                        continue
+                except Exception as e:
+                    logger.error("bond_creation_failed", error=str(e))
+                    continue
 
         # Sort by arbitrage percentage (descending)
         opportunities.sort(key=lambda x: x["arbitrage_pct"], reverse=True)
@@ -287,12 +287,15 @@ def main():
         # Display results
         print()
         print("="*100)
-        print("BONDING AND ARBITRAGE DETECTION COMPLETE")
+        print("BONDING COMPLETE - SIMILARITY-BASED MATCHING")
         print("="*100)
         print()
         print(f"Markets processed: {len(kalshi_markets)}")
-        print(f"Bonds created: {bonds_created}")
-        print(f"Arbitrage opportunities (2-10% range): {len(opportunities)}")
+        print(f"Total bonds created: {bonds_created}")
+        print(f"Current arbitrage opportunities (2-10% range): {len(opportunities)}")
+        print()
+        print("NOTE: Bonds created based on text similarity (0.50+) - not requiring arbitrage.")
+        print("These bonds will be monitored every minute for arbitrage windows.")
         print()
 
         if opportunities:
