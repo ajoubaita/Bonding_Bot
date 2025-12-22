@@ -168,7 +168,10 @@ class PriceUpdater:
             return 0
 
     def update_polymarket_prices(self, db: Session, target_market_ids: List[str] = None) -> int:
-        """Update prices for Polymarket markets using CLOB simplified-markets API.
+        """Update prices for Polymarket markets using individual token order books.
+
+        NEW APPROACH (2025-12-16): Fetch individual order books for each bonded market's tokens
+        instead of relying on simplified-markets which only returns top 1000 active markets.
 
         Args:
             db: Database session
@@ -180,96 +183,97 @@ class PriceUpdater:
         logger.info("update_polymarket_prices_start", target_count=len(target_market_ids) if target_market_ids else "all")
 
         try:
-            # Fetch ALL markets from simplified-markets endpoint (single efficient call)
-            # Then filter to bonded markets if target_market_ids provided
-            all_simplified_markets = self.poly_clob_client.get_simplified_markets()
-
-            logger.info(
-                "polymarket_clob_fetch_complete",
-                total_markets=len(all_simplified_markets) if all_simplified_markets else 0,
-            )
-
-            # Filter to bonded markets if target_market_ids provided
-            # NOTE: Polymarket simplified-markets only returns ~1000 most active markets
-            # So we can only update bonded markets that happen to be in that subset
+            # NEW: Fetch markets from database to get their clob_token_ids
+            # This guarantees we have token IDs for bonded markets
             if target_market_ids:
-                target_set = set(target_market_ids)
-
-                simplified_markets = [
-                    m for m in all_simplified_markets
-                    if isinstance(m, dict) and m.get("condition_id") in target_set
-                ]
-
-                # Log opportunistic matches (not all bonded markets will be in API response)
-                if simplified_markets:
-                    matched_ids = [m.get("condition_id")[:20] + "..." for m in simplified_markets[:3]]
-                    logger.info(
-                        "polymarket_bonded_markets_matched",
-                        requested=len(target_market_ids),
-                        matched=len(simplified_markets),
-                        sample_matched_ids=matched_ids,
-                    )
-                else:
-                    logger.info(
-                        "polymarket_no_bonded_markets_in_api_response",
-                        requested=len(target_market_ids),
-                        api_total=len(all_simplified_markets),
-                        note="API only returns ~1000 most active markets - bonded markets may not be in this subset",
-                    )
-                    # Continue with empty list - this is expected, not an error
-                    simplified_markets = []
-            else:
-                simplified_markets = all_simplified_markets
-
-            # Log sample conditionIds from API for debugging
-            if simplified_markets:
-                sample_ids = [m.get("condition_id") for m in simplified_markets[:5] if isinstance(m, dict)]
-                logger.info(
-                    "polymarket_sample_clob_condition_ids",
-                    sample_ids=sample_ids,
+                # Fetch bonded markets from database
+                markets_query = db.query(Market).filter(
+                    Market.id.in_(target_market_ids),
+                    Market.platform == "polymarket"
                 )
+                markets_to_update = markets_query.all()
+
+                logger.info(
+                    "polymarket_markets_fetched_from_db",
+                    requested=len(target_market_ids),
+                    found=len(markets_to_update),
+                )
+            else:
+                # Fallback: fetch all active Polymarket markets
+                markets_to_update = db.query(Market).filter(
+                    Market.platform == "polymarket",
+                    Market.status == "active"
+                ).limit(1000).all()
 
             updated_count = 0
+            failed_count = 0
 
-            for market_data in simplified_markets:
+            for market in markets_to_update:
                 try:
-                    if not isinstance(market_data, dict):
+                    condition_id = market.id
+
+                    # Extract clob_token_ids from market_metadata
+                    clob_token_ids = None
+                    if market.market_metadata and isinstance(market.market_metadata, dict):
+                        clob_token_ids = market.market_metadata.get("clob_token_ids")
+
+                    if not clob_token_ids:
+                        logger.debug(
+                            "polymarket_no_token_ids",
+                            condition_id=condition_id,
+                        )
+                        failed_count += 1
                         continue
 
-                    condition_id = market_data.get("condition_id")
-                    tokens = market_data.get("tokens", [])
+                    # Fetch order book for each token to get current prices
+                    outcome_schema = market.outcome_schema.copy() if market.outcome_schema else {"outcomes": []}
+                    outcomes = outcome_schema.get("outcomes", [])
 
-                    if not condition_id or not tokens:
-                        continue
+                    prices_updated = False
 
-                    # Find market in database by condition_id
-                    market = db.query(Market).filter(
-                        Market.id == condition_id,
-                        Market.platform == "polymarket"
-                    ).first()
+                    for i, token_id in enumerate(clob_token_ids):
+                        try:
+                            # Fetch order book for this token
+                            order_book = self.poly_clob_client.get_market_order_book(token_id)
 
-                    if market and market.outcome_schema:
-                        # Update prices in outcome_schema from tokens array
-                        outcome_schema = market.outcome_schema.copy()
-                        outcomes = outcome_schema.get("outcomes", [])
+                            # Extract mid price from order book
+                            bids = order_book.get("bids", [])
+                            asks = order_book.get("asks", [])
 
-                        # Map token prices to outcomes by index
-                        for i, token_data in enumerate(tokens):
-                            if i < len(outcomes):
-                                try:
-                                    price = token_data.get("price")
-                                    if price is not None:
-                                        outcomes[i]["price"] = float(price)
-                                except (ValueError, TypeError) as e:
-                                    logger.warning(
-                                        "invalid_token_price_value",
+                            if bids and asks:
+                                # Get best bid and ask
+                                best_bid = float(bids[0].get("price", 0)) if isinstance(bids[0], dict) else 0
+                                best_ask = float(asks[0].get("price", 0)) if isinstance(asks[0], dict) else 0
+
+                                # Calculate mid price
+                                mid_price = (best_bid + best_ask) / 2
+
+                                # Update outcome price
+                                if i < len(outcomes):
+                                    outcomes[i]["price"] = mid_price
+                                    outcomes[i]["bid"] = best_bid
+                                    outcomes[i]["ask"] = best_ask
+                                    prices_updated = True
+
+                                    logger.debug(
+                                        "polymarket_token_price_updated",
                                         condition_id=condition_id,
-                                        index=i,
-                                        token_data=token_data,
-                                        error=str(e),
+                                        token_id=token_id[:20] + "...",
+                                        mid_price=mid_price,
                                     )
-                                    continue
 
+                        except Exception as e:
+                            logger.warning(
+                                "polymarket_token_order_book_failed",
+                                condition_id=condition_id,
+                                token_id=token_id[:20] + "..." if token_id else None,
+                                error=str(e),
+                            )
+                            # Continue to next token - partial updates are OK
+                            continue
+
+                    # Only update market if at least one price was fetched
+                    if prices_updated:
                         market.outcome_schema = outcome_schema
                         market.updated_at = datetime.utcnow()
 
@@ -278,23 +282,26 @@ class PriceUpdater:
 
                         # Log price update
                         from src.utils.bonding_logger import log_price_update
-                        if tokens and len(tokens) > 0:
-                            first_token_price = tokens[0].get("price", 0.0)
+                        if outcomes and len(outcomes) > 0:
+                            first_outcome_price = outcomes[0].get("price", 0.0)
                             log_price_update(
                                 platform="polymarket",
                                 market_id=condition_id,
-                                price=float(first_token_price) if first_token_price else 0.0,
+                                price=float(first_outcome_price) if first_outcome_price else 0.0,
                                 price_type="mid",
                             )
 
                         updated_count += 1
+                    else:
+                        failed_count += 1
 
                 except Exception as e:
                     logger.error(
-                        "update_polymarket_price_failed",
-                        condition_id=market_data.get("condition_id") if isinstance(market_data, dict) else "unknown",
+                        "update_polymarket_market_failed",
+                        condition_id=market.id if market else "unknown",
                         error=str(e),
                     )
+                    failed_count += 1
                     continue
 
             db.commit()
@@ -302,7 +309,8 @@ class PriceUpdater:
             logger.info(
                 "update_polymarket_prices_complete",
                 updated=updated_count,
-                total_fetched=len(simplified_markets),
+                failed=failed_count,
+                total_processed=len(markets_to_update),
             )
 
             return updated_count
