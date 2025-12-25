@@ -111,37 +111,49 @@ class Settings(BaseSettings):
         description="Weight for resolution source similarity feature"
     )
 
-    # Tier Thresholds
-    # NOTE: p_match uses logistic regression that requires calibration
-    # Production data shows p_match scores of 0.85-0.87 for similar markets
-    # Adjusted thresholds based on real production data patterns (Dec 2025)
+    # Tier Thresholds - EMERGENCY FIX (Dec 24, 2025)
+    # AUDIT FOUND: 80-85% false positive rate in Tier 1 bonds!
+    # Issue: p_match is severely miscalibrated, allowing similarity_score of 0.48-0.59
+    # Action: Dramatically raise ALL thresholds to prevent catastrophic trading losses
+
+    # CRITICAL: Aggregate similarity_score threshold (weighted average of all features)
+    tier1_min_similarity_score: float = Field(
+        default=0.80,
+        description="MINIMUM aggregate similarity score for Tier 1 (was allowing 0.48-0.59!)"
+    )
+    tier2_min_similarity_score: float = Field(
+        default=0.70,
+        description="MINIMUM aggregate similarity score for Tier 2"
+    )
+
     tier1_p_match_threshold: float = Field(
-        default=0.85,
-        description="Minimum p_match for Tier 1 (auto bond) - adjusted to match production data patterns"
+        default=0.95,
+        description="Raised from 0.85 - p_match was assigning 0.96 to false positives"
     )
     tier2_p_match_threshold: float = Field(
-        default=0.75,
-        description="Minimum p_match for Tier 2 (cautious bond) - lowered to capture medium-confidence matches"
+        default=0.90,
+        description="Raised from 0.80 - p_match is badly miscalibrated"
     )
 
-    # Tier 1 Additional Requirements
-    # UPDATED: Increased text similarity requirement to prevent cross-sport bonding (NFL↔NHL)
-    # Time alignment scoring is exponential - even 20-day deltas only score 0.05
-    tier1_min_text_score: float = Field(default=0.75)  # Increased from 0.60 to prevent false positives
-    tier1_min_outcome_score: float = Field(default=0.90)  # Most markets show 1.0 - keep strict
-    tier1_min_time_score: float = Field(default=0.01)  # Exponential decay - 0.85 was unrealistic
-    tier1_min_resolution_score: float = Field(default=0.20)  # Production shows 0.3 when present
+    # Tier 1 Additional Requirements - STRICTER ENFORCEMENT
+    # ALL of these must pass in addition to aggregate similarity_score and p_match
+    tier1_min_text_score: float = Field(default=0.90)  # RAISED from 0.85 - text must match very closely
+    tier1_min_entity_score: float = Field(default=0.70)  # NEW - entity overlap required
+    tier1_min_outcome_score: float = Field(default=0.98)  # RAISED from 0.95 - outcomes must be nearly identical
+    tier1_min_time_score: float = Field(default=0.50)  # RAISED from 0.01 - time windows must align
+    tier1_min_resolution_score: float = Field(default=0.20)  # Keep at 0.20 (many markets don't have this)
 
     # Tier 2 Additional Requirements
-    tier2_min_text_score: float = Field(default=0.55)
-    tier2_min_outcome_score: float = Field(default=0.70)
-    tier2_min_time_score: float = Field(default=0.005)
+    tier2_min_text_score: float = Field(default=0.80)  # RAISED from 0.75
+    tier2_min_entity_score: float = Field(default=0.50)  # NEW - entity overlap required
+    tier2_min_outcome_score: float = Field(default=0.90)  # RAISED from 0.85
+    tier2_min_time_score: float = Field(default=0.30)  # RAISED from 0.01
 
     # Hard Constraint Thresholds
-    # NOTE: Relaxed constraints based on production rejection patterns
-    hard_constraint_min_text_score: float = Field(default=0.50)  # Keep current
+    # CRITICAL FIX: Tightened to reject low-quality candidates earlier
+    hard_constraint_min_text_score: float = Field(default=0.70)  # Raised from 0.50
     hard_constraint_min_entity_score: float = Field(default=0.0)  # Many valid matches have 0 entity overlap
-    hard_constraint_max_time_delta_days: int = Field(default=150)  # Increased from 90 - many markets rejected at 101+ days
+    hard_constraint_max_time_delta_days: int = Field(default=90)  # Reduced from 150 - tighter time window
 
     # Logging
     log_level: str = Field(
