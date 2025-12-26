@@ -32,7 +32,7 @@ def assign_tier(
     # Immediate reject if hard constraints violated
     if hard_constraints_violated:
         logger.info("tier_assignment", tier=3, reason="hard_constraints_violated")
-        
+
         # Log rejection for analysis
         if market_k_id and market_p_id and similarity_result:
             from src.utils.bonding_logger import log_bonding_candidate
@@ -44,7 +44,7 @@ def assign_tier(
                 tier=3,
                 rejection_reason="hard_constraints_violated",
             )
-        
+
         return 3
 
     # Extract individual feature scores
@@ -54,10 +54,17 @@ def assign_tier(
     score_outcome = features.get("outcome", {}).get("score_outcome", 0.0)
     score_resolution = features.get("resolution", {}).get("score_resolution", 0.0)
 
+    # CRITICAL FIX (Dec 25, 2025): Extract aggregate similarity_score
+    # This is the weighted average of all features and MUST meet minimum threshold
+    similarity_score = similarity_result.get("similarity_score", 0.0) if similarity_result else 0.0
+
     # Tier 1: Auto Bond (highest confidence)
+    # CRITICAL FIX: Added similarity_score check that was previously missing!
     tier1_criteria = [
+        similarity_score >= settings.tier1_min_similarity_score,  # NEW: Aggregate threshold check
         p_match >= settings.tier1_p_match_threshold,
         score_text >= settings.tier1_min_text_score,
+        score_entity_final >= settings.tier1_min_entity_score,  # NEW: Entity check from config
         score_outcome >= settings.tier1_min_outcome_score,
         score_time_final >= settings.tier1_min_time_score,
         score_resolution >= settings.tier1_min_resolution_score,
@@ -91,9 +98,12 @@ def assign_tier(
         return 1
 
     # Tier 2: Cautious Bond (moderate confidence)
+    # CRITICAL FIX: Added similarity_score check here too!
     tier2_criteria = [
+        similarity_score >= settings.tier2_min_similarity_score,  # NEW: Aggregate threshold check
         p_match >= settings.tier2_p_match_threshold,
         score_text >= settings.tier2_min_text_score,
+        score_entity_final >= settings.tier2_min_entity_score,  # NEW: Entity check from config
         score_outcome >= settings.tier2_min_outcome_score,
         score_time_final >= settings.tier2_min_time_score,
     ]
