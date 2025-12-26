@@ -26,6 +26,7 @@ from functools import partial
 from src.models import get_db, Market, Bond
 from src.config import settings
 from src.similarity.calculator import calculate_similarity
+from src.similarity.tier_assigner import assign_tier
 
 logger = structlog.get_logger()
 
@@ -138,50 +139,6 @@ def find_candidates_with_embedding(
     )
 
     return ordered_candidates
-
-
-def determine_tier(similarity_result: Dict[str, Any]) -> Optional[int]:
-    """Determine bond tier based on similarity scores.
-
-    Args:
-        similarity_result: Result from calculate_similarity()
-
-    Returns:
-        Tier (1, 2, or 3) or None if below all thresholds
-    """
-    if similarity_result["hard_constraints_violated"]:
-        return None
-
-    p_match = similarity_result["p_match"]
-    features = similarity_result["features"]
-
-    # Extract feature scores
-    text_score = features.get("text", {}).get("score_text", 0.0)
-    outcome_score = features.get("outcome", {}).get("score_outcome", 0.0)
-    time_score = features.get("time", {}).get("score_time_final", 0.0)
-    resolution_score = features.get("resolution", {}).get("score_resolution", 0.0)
-
-    # Check Tier 1: Highest confidence, auto-execute
-    if (
-        p_match >= settings.tier1_p_match_threshold
-        and text_score >= settings.tier1_min_text_score
-        and outcome_score >= settings.tier1_min_outcome_score
-        and time_score >= settings.tier1_min_time_score
-        and resolution_score >= settings.tier1_min_resolution_score
-    ):
-        return 1
-
-    # Check Tier 2: Medium confidence, cautious execution
-    if (
-        p_match >= settings.tier2_p_match_threshold
-        and text_score >= settings.tier2_min_text_score
-        and outcome_score >= settings.tier2_min_outcome_score
-        and time_score >= settings.tier2_min_time_score
-    ):
-        return 2
-
-    # Tier 3: Low confidence, informational only
-    return 3
 
 
 def extract_outcome_mapping(similarity_result: Dict[str, Any]) -> Dict[str, str]:
@@ -393,14 +350,22 @@ def process_kalshi_market(
                     stats["rejected"] += 1
                     continue
 
-                # Determine tier
-                tier = determine_tier(similarity_result)
+                # Determine tier using corrected assign_tier function
+                tier = assign_tier(
+                    p_match=similarity_result["p_match"],
+                    features=similarity_result["features"],
+                    hard_constraints_violated=similarity_result["hard_constraints_violated"],
+                    market_k_id=kalshi_market.id,
+                    market_p_id=poly_market.id,
+                    similarity_result=similarity_result,
+                )
 
-                if tier is None:
+                # Tier 3 = rejection (includes hard constraints and insufficient scores)
+                if tier == 3:
                     stats["rejected"] += 1
                     continue
 
-                # Create bond
+                # Create bond for Tier 1 and Tier 2 only
                 bond = create_bond(
                     db,
                     kalshi_market,
@@ -414,8 +379,6 @@ def process_kalshi_market(
                         stats["tier1"] += 1
                     elif tier == 2:
                         stats["tier2"] += 1
-                    else:
-                        stats["tier3"] += 1
 
         except Exception as e:
             logger.error(
@@ -433,14 +396,22 @@ def process_kalshi_market(
                 # Calculate similarity
                 result = calculate_similarity(kalshi_market, poly_market)
 
-                # Determine tier
-                tier = determine_tier(result)
+                # Determine tier using corrected assign_tier function
+                tier = assign_tier(
+                    p_match=result["p_match"],
+                    features=result["features"],
+                    hard_constraints_violated=result["hard_constraints_violated"],
+                    market_k_id=kalshi_market.id,
+                    market_p_id=poly_market.id,
+                    similarity_result=result,
+                )
 
-                if tier is None:
+                # Tier 3 = rejection (includes hard constraints and insufficient scores)
+                if tier == 3:
                     stats["rejected"] += 1
                     continue
 
-                # Create bond
+                # Create bond for Tier 1 and Tier 2 only
                 bond = create_bond(
                     db,
                     kalshi_market,
@@ -454,8 +425,6 @@ def process_kalshi_market(
                         stats["tier1"] += 1
                     elif tier == 2:
                         stats["tier2"] += 1
-                    else:
-                        stats["tier3"] += 1
 
             except Exception as e:
                 logger.error(
