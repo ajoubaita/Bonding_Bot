@@ -162,7 +162,7 @@ def log_price_update(
     order_book_depth: Optional[float] = None,
 ) -> None:
     """Log price updates for monitoring.
-    
+
     Args:
         platform: "kalshi" or "polymarket"
         market_id: Market ID
@@ -179,8 +179,36 @@ def log_price_update(
         "price_type": price_type,
         "order_book_depth": order_book_depth,
     }
-    
+
     logger.debug("price_updated", **log_data)
+
+
+def log_arbitrage_scan(
+    total_bonds: int,
+    opportunities: int,
+    trades_executed: int,
+    portfolio_balance: float,
+) -> None:
+    """Log arbitrage scan results for monitoring.
+
+    This is called after each scan cycle to track trading activity.
+
+    Args:
+        total_bonds: Number of bonds scanned
+        opportunities: Number of arbitrage opportunities found
+        trades_executed: Number of trades executed
+        portfolio_balance: Current portfolio balance
+    """
+    log_data = {
+        "event_type": "arbitrage_scan",
+        "timestamp": datetime.utcnow().isoformat(),
+        "total_bonds": total_bonds,
+        "opportunities_found": opportunities,
+        "trades_executed": trades_executed,
+        "portfolio_balance": portfolio_balance,
+    }
+
+    logger.info("arbitrage_scan_complete", **log_data)
 
 
 def export_bonding_logs_to_csv(
