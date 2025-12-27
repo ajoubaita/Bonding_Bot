@@ -7,7 +7,7 @@ import structlog
 
 from src.config import settings
 from src.api.middleware.auth import AuthMiddleware
-from src.api.routes import health, markets, pairs, arbitrage
+from src.api.routes import health, markets, pairs, arbitrage, dashboard
 
 # Configure structured logging
 # Convert string log level to integer
@@ -49,6 +49,7 @@ app.add_middleware(
 app.add_middleware(AuthMiddleware)
 
 # Include routers
+app.include_router(dashboard.router, prefix="/v1", tags=["Dashboard"])
 app.include_router(health.router, prefix="/v1", tags=["Health"])
 app.include_router(markets.router, prefix="/v1/markets", tags=["Markets"])
 app.include_router(pairs.router, prefix="/v1/pairs", tags=["Pairs"])
@@ -73,10 +74,6 @@ async def shutdown_event():
 
 @app.get("/")
 async def root():
-    """Root endpoint."""
-    return {
-        "service": "Bonding Bot API",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "health": "/v1/health",
-    }
+    """Root endpoint - redirect to dashboard."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/v1/")

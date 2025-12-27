@@ -389,12 +389,14 @@ class PriceUpdater:
         finally:
             db.close()
 
-    def run_continuous(self, interval_seconds: int = 60):
+    def run_continuous(self, interval_seconds: int = None):
         """Run continuous price updates.
 
         Args:
-            interval_seconds: Seconds between updates (default 60)
+            interval_seconds: Seconds between updates (default from settings.price_update_interval_sec)
         """
+        if interval_seconds is None:
+            interval_seconds = settings.price_update_interval_sec
         logger.info(
             "price_updater_start_continuous",
             interval_seconds=interval_seconds,

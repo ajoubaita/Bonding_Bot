@@ -89,6 +89,12 @@ class Settings(BaseSettings):
         description="Polymarket market polling interval (seconds)"
     )
 
+    # Price Update Intervals (LATENCY OPTIMIZATION)
+    price_update_interval_sec: int = Field(
+        default=10,
+        description="Price update interval for bonded markets (seconds) - reduced from 60s for faster arbitrage detection"
+    )
+
     # Feature Weights (must sum to 1.0)
     weight_text: float = Field(
         default=0.35,
