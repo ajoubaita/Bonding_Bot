@@ -1,10 +1,13 @@
 """API endpoints for arbitrage opportunity monitoring."""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional
+from sqlalchemy.orm import Session
 import structlog
 
 from src.trading.arbitrage_monitor import get_monitor
+from src.trading.intra_platform_arbitrage import IntraPlatformArbitrageScanner
+from src.models import get_db, Market
 
 logger = structlog.get_logger()
 
@@ -203,4 +206,79 @@ async def remove_stale(
 
     except Exception as e:
         logger.error("remove_stale_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/intra-platform")
+async def get_intra_platform_opportunities(
+    db: Session = Depends(get_db),
+    platform: Optional[str] = Query(default=None, description="Filter by platform (kalshi or polymarket)"),
+    min_profit_pct: float = Query(default=0.0, ge=0, le=100, description="Minimum profit percentage"),
+    limit: int = Query(default=50, ge=1, le=500, description="Maximum number of opportunities to return"),
+):
+    """Get intra-platform arbitrage opportunities where yes + no < $1.
+
+    This detects risk-free arbitrage within a single exchange where buying both
+    YES and NO outcomes costs less than the guaranteed $1 payout.
+
+    Example: YES = $0.45, NO = $0.52. Sum = $0.97. Buy both for $0.97, get $1.00 payout = $0.03 profit (3.1% ROI)
+
+    Args:
+        platform: Filter by platform ('kalshi' or 'polymarket', default all)
+        min_profit_pct: Minimum profit percentage to include (default 0 = any profit)
+        limit: Maximum opportunities to return (1-500, default 50)
+
+    Returns:
+        List of intra-platform arbitrage opportunities with profit estimates
+    """
+    try:
+        # Validate platform
+        if platform and platform not in ['kalshi', 'polymarket']:
+            raise HTTPException(status_code=400, detail="Platform must be 'kalshi' or 'polymarket'")
+
+        # Get all markets with fresh prices
+        query = db.query(Market).filter(
+            Market.yes_price.isnot(None),
+            Market.no_price.isnot(None),
+            Market.yes_price > 0,
+            Market.no_price > 0,
+        )
+
+        if platform:
+            query = query.filter(Market.platform == platform)
+
+        markets = query.all()
+
+        # Scan for opportunities
+        scanner = IntraPlatformArbitrageScanner()
+        opportunities = scanner.scan_markets(
+            markets=markets,
+            min_profit_threshold=min_profit_pct / 100.0,  # Convert percentage to decimal
+            platform_filter=platform,
+        )
+
+        # Limit results
+        opportunities = opportunities[:limit]
+
+        # Get statistics
+        stats = scanner.get_statistics(opportunities)
+
+        logger.info(
+            "intra_platform_scan_complete",
+            platform=platform,
+            min_profit_pct=min_profit_pct,
+            total_markets_scanned=len(markets),
+            opportunities_found=len(opportunities),
+        )
+
+        return {
+            "count": len(opportunities),
+            "statistics": stats,
+            "opportunities": [opp.to_dict() for opp in opportunities],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("intra_platform_opportunities_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
