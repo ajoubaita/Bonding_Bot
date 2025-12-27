@@ -13,6 +13,7 @@ from src.utils.arbitrage import (
     filter_by_minimum_volume,
     get_market_volume,
 )
+from src.utils.cache import get_cache
 
 logger = structlog.get_logger()
 
@@ -246,7 +247,22 @@ async def get_bond_registry(
     Returns:
         BondRegistryResponse with all active bonds
     """
-    # Build query
+    # Build cache key from parameters
+    cache_key = f"bond_registry:tier={tier}:status={status_filter}:min_vol={min_volume}:arb={include_arbitrage}:limit={limit}:offset={offset}"
+
+    # Try to get from cache
+    cache = get_cache()
+    cached_response = cache.get(cache_key)
+
+    if cached_response is not None:
+        logger.info(
+            "bond_registry_cache_hit",
+            tier=tier,
+            cache_key=cache_key[:50] + "...",
+        )
+        return BondRegistryResponse(**cached_response)
+
+    # Cache miss - build query
     query = db.query(Bond).filter(Bond.status == status_filter)
     if tier is not None:
         query = query.filter(Bond.tier == tier)
@@ -328,7 +344,7 @@ async def get_bond_registry(
         returned=len(registry_entries),
     )
 
-    return BondRegistryResponse(
+    response = BondRegistryResponse(
         bonds=registry_entries,
         total=total,
         pagination={
@@ -337,6 +353,16 @@ async def get_bond_registry(
             "has_more": offset + len(registry_entries) < total,
         },
     )
+
+    # Cache the response
+    cache.set(cache_key, response.dict(), ttl=settings.bond_registry_cache_ttl_sec)
+    logger.debug(
+        "bond_registry_cached",
+        cache_key=cache_key[:50] + "...",
+        ttl=settings.bond_registry_cache_ttl_sec,
+    )
+
+    return response
 
 
 @router.post("/recompute", response_model=RecomputeResponse)
