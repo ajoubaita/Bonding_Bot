@@ -209,6 +209,96 @@ async def remove_stale(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/comprehensive")
+async def get_comprehensive_opportunities(
+    tier: Optional[int] = Query(default=None, ge=1, le=3, description="Filter by tier (1-3)"),
+    min_profit: float = Query(default=0.01, ge=0, le=1, description="Minimum profit threshold"),
+    limit_per_type: int = Query(default=50, ge=1, le=200, description="Max opportunities per type"),
+):
+    """Get ALL three types of arbitrage opportunities on bonded markets.
+
+    This endpoint performs a comprehensive scan that checks for:
+    1. Cross-platform arbitrage (Kalshi vs Polymarket price differences)
+    2. Intra-platform Kalshi arbitrage (Kalshi YES + NO < $1)
+    3. Intra-platform Polymarket arbitrage (Polymarket YES + NO < $1)
+
+    This is efficient because we already monitor bonded markets with priority
+    price updates, so we can check for all three opportunity types with the
+    same data.
+
+    Args:
+        tier: Filter by bond tier (1=auto, 2=cautious, 3=reject, default all)
+        min_profit: Minimum profit per dollar (default 0.01 = 1%)
+        limit_per_type: Max opportunities to return per type (default 50, max 200)
+
+    Returns:
+        Dictionary with three lists of opportunities plus summary statistics:
+        {
+            "cross_platform": [...],
+            "intra_kalshi": [...],
+            "intra_polymarket": [...],
+            "summary": {...}
+        }
+    """
+    try:
+        monitor = get_monitor()
+
+        # Scan for all three types of arbitrage
+        all_opportunities = monitor.scan_for_all_opportunities(
+            tier_filter=tier,
+            min_profit_threshold=min_profit,
+        )
+
+        # Limit results per type
+        cross_platform = all_opportunities["cross_platform"][:limit_per_type]
+        intra_kalshi = all_opportunities["intra_kalshi"][:limit_per_type]
+        intra_poly = all_opportunities["intra_polymarket"][:limit_per_type]
+
+        # Calculate summary statistics
+        total_opps = len(cross_platform) + len(intra_kalshi) + len(intra_poly)
+
+        # Calculate total profit potential
+        cross_profit = sum(opp.estimated_profit_usd for opp in cross_platform)
+        intra_k_profit = sum(opp.arbitrage_gap for opp in intra_kalshi)
+        intra_p_profit = sum(opp.arbitrage_gap for opp in intra_poly)
+
+        summary = {
+            "total_opportunities": total_opps,
+            "by_type": {
+                "cross_platform": len(cross_platform),
+                "intra_kalshi": len(intra_kalshi),
+                "intra_polymarket": len(intra_poly),
+            },
+            "total_profit_potential": {
+                "cross_platform_usd": round(cross_profit, 2),
+                "intra_kalshi_usd": round(intra_k_profit, 2),
+                "intra_polymarket_usd": round(intra_p_profit, 2),
+                "total_usd": round(cross_profit + intra_k_profit + intra_p_profit, 2),
+            },
+        }
+
+        logger.info(
+            "comprehensive_arbitrage_api_call",
+            tier=tier,
+            min_profit=min_profit,
+            total_opportunities=total_opps,
+            cross_platform=len(cross_platform),
+            intra_kalshi=len(intra_kalshi),
+            intra_polymarket=len(intra_poly),
+        )
+
+        return {
+            "cross_platform": [opp.to_dict() for opp in cross_platform],
+            "intra_kalshi": [opp.to_dict() for opp in intra_kalshi],
+            "intra_polymarket": [opp.to_dict() for opp in intra_poly],
+            "summary": summary,
+        }
+
+    except Exception as e:
+        logger.error("comprehensive_arbitrage_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/intra-platform")
 async def get_intra_platform_opportunities(
     db: Session = Depends(get_db),

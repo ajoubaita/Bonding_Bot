@@ -2,6 +2,11 @@
 
 Tracks active arbitrage opportunities, ranks by profit potential, and
 provides continuous monitoring of the most profitable markets.
+
+Monitors THREE types of arbitrage on bonded markets:
+1. Cross-platform: Kalshi vs Polymarket price differences
+2. Intra-platform Kalshi: Kalshi YES + NO < $1.00
+3. Intra-platform Polymarket: Polymarket YES + NO < $1.00
 """
 
 from typing import Dict, Any, List, Optional
@@ -12,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from src.models import Bond, Market, get_db
 from src.utils.arbitrage import calculate_arbitrage_opportunity
+from src.trading.intra_platform_arbitrage import IntraPlatformArbitrageScanner
 
 logger = structlog.get_logger()
 
@@ -235,6 +241,158 @@ class ArbitrageMonitor:
                 error=str(e),
             )
             return []
+
+    def scan_for_all_opportunities(
+        self,
+        tier_filter: Optional[int] = None,
+        min_profit_threshold: float = 0.01,
+    ) -> Dict[str, List]:
+        """Scan all bonded markets for ALL three types of arbitrage.
+
+        For each bonded market pair, checks:
+        1. Cross-platform arbitrage (Kalshi vs Polymarket)
+        2. Intra-platform arbitrage on Kalshi side (YES + NO < $1)
+        3. Intra-platform arbitrage on Polymarket side (YES + NO < $1)
+
+        This is efficient because we're already monitoring these markets
+        with priority price updates.
+
+        Args:
+            tier_filter: Only scan bonds of specific tier (None = all tiers)
+            min_profit_threshold: Minimum profit per dollar to track (default 1%)
+
+        Returns:
+            Dictionary with three lists:
+            {
+                "cross_platform": [ArbitrageOpportunity, ...],
+                "intra_kalshi": [IntraPlatformOpportunity, ...],
+                "intra_polymarket": [IntraPlatformOpportunity, ...]
+            }
+        """
+        db = next(get_db())
+        intra_scanner = IntraPlatformArbitrageScanner()
+
+        try:
+            # Query all active bonds
+            query = (
+                db.query(Bond)
+                .filter(Bond.status == "active")
+            )
+
+            if tier_filter is not None:
+                query = query.filter(Bond.tier == tier_filter)
+
+            bonds = query.all()
+
+            # Results containers
+            cross_platform_opps = []
+            intra_kalshi_opps = []
+            intra_poly_opps = []
+
+            for bond in bonds:
+                # Get markets for this bond
+                kalshi_market = db.query(Market).filter(Market.id == bond.kalshi_market_id).first()
+                poly_market = db.query(Market).filter(Market.id == bond.polymarket_market_id).first()
+
+                if not kalshi_market or not poly_market:
+                    continue
+
+                # 1. Check cross-platform arbitrage
+                arbitrage = calculate_arbitrage_opportunity(
+                    kalshi_market,
+                    poly_market,
+                    bond.outcome_mapping
+                )
+
+                if arbitrage.get("has_arbitrage"):
+                    profit = arbitrage.get("profit_per_dollar", 0.0)
+                    if profit >= min_profit_threshold:
+                        now = datetime.utcnow()
+
+                        # Update or create cross-platform opportunity
+                        if bond.pair_id in self.opportunities:
+                            opp = self.opportunities[bond.pair_id]
+                            opp.profit_per_dollar = profit
+                            opp.kalshi_price = arbitrage.get("kalshi_price", 0.0)
+                            opp.polymarket_price = arbitrage.get("polymarket_price", 0.0)
+                            opp.max_position_size = arbitrage.get("max_position_size", 0.0)
+                            opp.min_volume = arbitrage.get("min_volume", 0.0)
+                            opp.min_liquidity = arbitrage.get("min_liquidity", 0.0)
+                            opp.warnings = arbitrage.get("warnings", [])
+                            opp.price_age_kalshi_sec = arbitrage.get("price_age_kalshi_sec")
+                            opp.price_age_poly_sec = arbitrage.get("price_age_poly_sec")
+                            opp.last_updated = now
+                            opp.price_update_count += 1
+                        else:
+                            opp = ArbitrageOpportunity(
+                                bond_id=bond.pair_id,
+                                kalshi_market_id=bond.kalshi_market_id,
+                                polymarket_market_id=bond.polymarket_market_id,
+                                kalshi_platform_id=kalshi_market.id if kalshi_market else bond.kalshi_market_id,
+                                polymarket_platform_id=poly_market.condition_id if poly_market and poly_market.condition_id else bond.polymarket_market_id,
+                                arbitrage_type=arbitrage.get("arbitrage_type", ""),
+                                profit_per_dollar=profit,
+                                kalshi_price=arbitrage.get("kalshi_price", 0.0),
+                                polymarket_price=arbitrage.get("polymarket_price", 0.0),
+                                max_position_size=arbitrage.get("max_position_size", 0.0),
+                                min_volume=arbitrage.get("min_volume", 0.0),
+                                min_liquidity=arbitrage.get("min_liquidity", 0.0),
+                                tier=bond.tier,
+                                first_detected=now,
+                                last_updated=now,
+                                price_update_count=1,
+                                warnings=arbitrage.get("warnings", []),
+                                price_age_kalshi_sec=arbitrage.get("price_age_kalshi_sec"),
+                                price_age_poly_sec=arbitrage.get("price_age_poly_sec"),
+                            )
+                            self.opportunities[bond.pair_id] = opp
+
+                        cross_platform_opps.append(opp)
+                else:
+                    # Remove from tracking if no longer has arbitrage
+                    if bond.pair_id in self.opportunities:
+                        del self.opportunities[bond.pair_id]
+
+                # 2. Check Kalshi intra-platform arbitrage
+                kalshi_intra = intra_scanner.scan_market(kalshi_market)
+                if kalshi_intra and kalshi_intra.profit_per_dollar >= min_profit_threshold:
+                    intra_kalshi_opps.append(kalshi_intra)
+
+                # 3. Check Polymarket intra-platform arbitrage
+                poly_intra = intra_scanner.scan_market(poly_market)
+                if poly_intra and poly_intra.profit_per_dollar >= min_profit_threshold:
+                    intra_poly_opps.append(poly_intra)
+
+            # Sort all by profit
+            cross_platform_opps.sort(key=lambda x: x.estimated_profit_usd, reverse=True)
+            intra_kalshi_opps.sort(key=lambda x: x.profit_per_dollar, reverse=True)
+            intra_poly_opps.sort(key=lambda x: x.profit_per_dollar, reverse=True)
+
+            logger.info(
+                "comprehensive_arbitrage_scan_complete",
+                total_bonds=len(bonds),
+                cross_platform=len(cross_platform_opps),
+                intra_kalshi=len(intra_kalshi_opps),
+                intra_polymarket=len(intra_poly_opps),
+                total_opportunities=len(cross_platform_opps) + len(intra_kalshi_opps) + len(intra_poly_opps),
+            )
+
+            return {
+                "cross_platform": cross_platform_opps,
+                "intra_kalshi": intra_kalshi_opps,
+                "intra_polymarket": intra_poly_opps,
+            }
+
+        except Exception as e:
+            logger.error(
+                "comprehensive_arbitrage_scan_error",
+                error=str(e),
+            )
+            return {
+                "cross_platform": [],
+                "intra_kalshi": [],
+                "intra_polymarket": [],
+            }
 
     def get_top_opportunities(
         self,
