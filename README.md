@@ -533,55 +533,99 @@ docker exec bonding_postgres psql -U bonding_user -d bonding_agent -c "SELECT ev
 ### System Flow
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Bonding Agent System                      │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌──────────────┐         ┌──────────────┐                 │
-│  │   Kalshi     │         │  Polymarket  │                 │
-│  │   Client     │         │   Client     │                 │
-│  └──────┬───────┘         └──────┬───────┘                 │
-│         │                        │                          │
-│         └────────┬───────────────┘                          │
-│                  ▼                                          │
-│         ┌─────────────────┐                                 │
-│         │   Ingestion     │  ← Text cleaning                │
-│         │   Pipeline      │  ← NER extraction               │
-│         │                 │  ← Event classification         │
-│         └────────┬────────┘                                 │
-│                  ▼                                          │
-│         ┌─────────────────┐                                 │
-│         │  Candidate      │  ← Vector similarity (HNSW)    │
-│         │  Generation     │  ← Fast filters                │
-│         └────────┬────────┘                                 │
-│                  ▼                                          │
-│         ┌─────────────────┐                                 │
-│         │  Similarity     │  ← Text embeddings             │
-│         │  Calculator     │  ← Entity matching             │
-│         │                 │  ← Time alignment              │
-│         │                 │  ← Outcome compatibility       │
-│         └────────┬────────┘                                 │
-│                  ▼                                          │
-│         ┌─────────────────┐                                 │
-│         │  Tier           │  ← Logistic regression         │
-│         │  Assignment     │  ← Hard constraints            │
-│         └────────┬────────┘                                 │
-│                  ▼                                          │
-│         ┌─────────────────┐                                 │
-│         │  REST API       │  ← Redis caching               │
-│         │  (Bond Service) │  ← Rate limiting               │
-│         └─────────────────┘                                 │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        Bonding Agent System                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌──────────────┐         ┌──────────────┐                                  │
+│  │   Kalshi     │         │  Polymarket  │                                  │
+│  │   Client     │         │   Client     │                                  │
+│  │ (Public API) │         │ (Gamma/CLOB) │                                  │
+│  └──────┬───────┘         └──────┬───────┘                                  │
+│         │                        │                                           │
+│         └────────┬───────────────┘                                           │
+│                  ▼                                                           │
+│         ┌─────────────────┐                                                  │
+│         │   Ingestion     │  ← Text cleaning & normalization                │
+│         │   Pipeline      │  ← NER extraction (spaCy)                       │
+│         │  (Poller Worker)│  ← Event classification                         │
+│         │                 │  ← Embedding generation (sentence-transformers) │
+│         └────────┬────────┘                                                  │
+│                  ▼                                                           │
+│         ┌─────────────────┐                                                  │
+│         │  Price Updater  │  ← Continuous price polling (60s interval)      │
+│         │    Worker       │  ← Priority market tracking                     │
+│         │                 │  ← Order book fetching                          │
+│         └────────┬────────┘                                                  │
+│                  ▼                                                           │
+│         ┌─────────────────┐                                                  │
+│         │  Candidate      │  ← Vector similarity (HNSW index)               │
+│         │  Generation     │  ← Fast filters (event type, time range)        │
+│         │                 │  ← Top-K retrieval (limit=50)                   │
+│         └────────┬────────┘                                                  │
+│                  ▼                                                           │
+│         ┌─────────────────┐                                                  │
+│         │  Similarity     │  ← Text embeddings (cosine similarity)          │
+│         │  Calculator     │  ← Entity matching (Jaccard)                    │
+│         │                 │  ← Time alignment (date proximity)               │
+│         │                 │  ← Outcome compatibility (polarity, structure)   │
+│         │                 │  ← Resolution source matching                    │
+│         └────────┬────────┘                                                  │
+│                  ▼                                                           │
+│         ┌─────────────────┐                                                  │
+│         │  Tier           │  ← Logistic regression (p_match calculation)    │
+│         │  Assignment     │  ← Hard constraints (event type, direction)     │
+│         │                 │  ← Dual threshold validation                    │
+│         └────────┬────────┘                                                  │
+│                  ▼                                                           │
+│         ┌─────────────────┐                                                  │
+│         │ Arbitrage       │  ← Cross-platform opportunity detection         │
+│         │ Monitor Worker  │  ← Intra-platform detection (yes+no < $1)       │
+│         │                 │  ← Profit calculation & ranking                  │
+│         └────────┬────────┘                                                  │
+│                  ▼                                                           │
+│         ┌─────────────────┐                                                  │
+│         │  REST API       │  ← Redis caching (60s TTL)                      │
+│         │  (FastAPI)      │  ← Rate limiting (100 req/min)                  │
+│         │                 │  ← Dashboard (HTML/JSON)                         │
+│         │                 │  ← Authentication (X-API-Key)                    │
+│         └─────────────────┘                                                  │
+│                  ▲                                                           │
+│         ┌────────┴────────┐                                                  │
+│         │                 │                                                  │
+│    ┌────▼─────┐   ┌───────▼──────┐                                          │
+│    │PostgreSQL│   │    Redis     │                                          │
+│    │(pgvector)│   │ (Cache Store)│                                          │
+│    └──────────┘   └──────────────┘                                          │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Worker Processes
+
+The system includes multiple background workers:
+
+1. **Poller Worker** (`src/ingestion/poller.py`): Continuously polls Kalshi & Polymarket APIs every 60s for new markets
+2. **Price Updater Worker** (`src/workers/price_updater.py`): Updates market prices every 60s, prioritizes active arbitrage opportunities
+3. **Arbitrage Monitor** (`src/trading/arbitrage_monitor.py`): Scans bonded markets for cross-platform arbitrage opportunities
 
 ### Tier System
 
-| Tier | Match Probability | Description | Trading Size |
-|------|-------------------|-------------|--------------|
-| **1** | ≥85% | **Auto Bond** - High confidence, safe for full arbitrage | 100% |
-| **2** | 75-85% | **Cautious Bond** - Reduced size, optional review | 10-25% |
-| **3** | <75% | **Reject** - No trading | 0% |
+| Tier | Requirements | Description | Trading Size |
+|------|--------------|-------------|--------------|
+| **1** | p_match ≥ 0.85 **AND** similarity_score ≥ 0.825 | **Auto Bond** - High confidence, safe for full arbitrage | 100% |
+| **2** | p_match ≥ 0.75 **AND** similarity_score ≥ 0.70 | **Cautious Bond** - Reduced size, optional review | 10-25% |
+| **3** | Below Tier 2 thresholds | **Reject** - No trading | 0% |
+
+**Important**: Tier assignment requires BOTH thresholds to be met. A bond with p_match=0.90 but similarity_score=0.80 will be assigned to Tier 2, not Tier 1.
+
+**Tier 1 Additional Requirements**:
+- Text similarity ≥ 0.75
+- Outcome score ≥ 0.90
+- Time alignment score ≥ 0.01
+- Resolution source score ≥ 0.20
+
+See `src/similarity/tier_assigner.py:26-45` for complete logic.
 
 ---
 
@@ -597,14 +641,36 @@ curl -H "X-API-Key: your-api-key-here" http://localhost:8000/v1/health
 
 ### Endpoints
 
+#### Dashboard & Health
+
 | Method | Path | Purpose |
 |--------|------|---------|
+| GET | `/v1/` | Interactive HTML dashboard with system metrics |
+| GET | `/v1/status` | Detailed JSON status (bonds, markets, health) |
 | GET | `/v1/health` | Health check + dependency status |
+
+#### Bond Registry & Markets
+
+| Method | Path | Purpose |
+|--------|------|---------|
 | GET | `/v1/bond_registry` | Get all active bonds (for trading engine) |
+| GET | `/v1/bonds` | List all bonds with filtering (tier, status) |
 | GET | `/v1/pairs/{platform}/{market_id}` | Get bonds for specific market |
-| GET | `/v1/bonds` | List all bonds with filtering |
-| GET | `/v1/arbitrage` | Get current arbitrage opportunities |
 | POST | `/v1/pairs/recompute` | Trigger similarity recalculation |
+| GET | `/v1/markets/{platform}` | List markets by platform |
+| GET | `/v1/markets/{platform}/{market_id}` | Get specific market details |
+
+#### Arbitrage Opportunities
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/v1/arbitrage/opportunities` | Top cross-platform arbitrage opportunities |
+| GET | `/v1/arbitrage/opportunities/{bond_id}` | Specific arbitrage opportunity by bond ID |
+| GET | `/v1/arbitrage/intra-platform` | Intra-platform arbitrage (yes+no < $1) |
+| POST | `/v1/arbitrage/scan` | Manually trigger arbitrage scan |
+| GET | `/v1/arbitrage/stats` | Arbitrage monitoring statistics |
+| GET | `/v1/arbitrage/priority-markets` | Market IDs to prioritize for price updates |
+| DELETE | `/v1/arbitrage/stale` | Remove stale opportunities |
 
 **Example: Get Bond Registry**:
 
@@ -767,6 +833,151 @@ Five weighted features determine final similarity score:
 3. **Time Alignment** (15%): Resolution date proximity
 4. **Outcome Structure** (20%): Yes/no polarity, bracket compatibility
 5. **Resolution Source** (5%): Authority matching (BLS, FOMC, etc.)
+
+---
+
+## Performance Optimizations
+
+### Database Connection Pooling
+
+PostgreSQL connection pool configured via SQLAlchemy:
+
+```python
+# In src/models/__init__.py
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=10,              # Concurrent connections
+    max_overflow=20,           # Additional connections under load
+    pool_timeout=30,           # Seconds to wait for connection
+    pool_recycle=3600,         # Recycle connections every hour
+    pool_pre_ping=True,        # Verify connections before use
+)
+```
+
+**Tuning Guidelines**:
+- Development: `pool_size=5, max_overflow=10`
+- Production: `pool_size=20, max_overflow=40`
+- Monitor pool exhaustion via `/v1/health` endpoint
+
+### Vector Search Index (HNSW)
+
+pgvector supports two index types for embedding similarity:
+
+| Index Type | Build Time | Query Speed | Recall |
+|------------|-----------|-------------|--------|
+| **IVFFlat** | Fast | Medium | ~95% |
+| **HNSW** | Slow | Very Fast | ~99% |
+
+**Production Recommendation**: Use HNSW for candidate generation at scale.
+
+**Create HNSW Index**:
+```sql
+CREATE INDEX idx_markets_embedding ON markets
+USING hnsw (text_embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
+```
+
+**Parameters**:
+- `m = 16`: Neighbors per layer (higher = better recall, slower build)
+- `ef_construction = 64`: Build-time search depth
+
+**Query Tuning**:
+```sql
+SET hnsw.ef_search = 100;  -- Higher = better recall, slower queries
+```
+
+### Redis Caching Strategy
+
+**Bond Registry Cache** (`bond_registry_cache_ttl_sec=60`):
+- Cache key: `bond_registry:{tier}:{min_volume}`
+- Invalidation: On bond state change (tier upgrade/downgrade)
+- Hit rate target: >90%
+
+**Market Price Cache** (`price_cache_ttl_sec=10`):
+- Cache key: `market_prices:{platform}:{market_id}`
+- Invalidation: On price update from worker
+- Hit rate target: >70%
+
+**Monitor Cache Performance**:
+```bash
+# Check hit rate
+docker exec bonding_redis redis-cli INFO stats | grep keyspace_hits
+```
+
+### Async/Await Pattern (Future Enhancement)
+
+The price_updater worker currently uses synchronous HTTP calls. Converting to async/await would improve throughput:
+
+**Current** (synchronous):
+```python
+for market_id in market_ids:
+    price = kalshi_client.get_price(market_id)  # Blocks 50-100ms
+    update_database(market_id, price)
+```
+
+**Optimized** (async):
+```python
+import asyncio
+import aiohttp
+
+async def fetch_prices(market_ids):
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_price(session, mid) for mid in market_ids]
+        return await asyncio.gather(*tasks)  # Parallel execution
+```
+
+**Expected Improvement**: 10x throughput (50 markets/sec → 500 markets/sec)
+
+### Parallel Order Book Fetching
+
+Polymarket order books are fetched sequentially. Parallelizing with `ThreadPoolExecutor` would reduce latency:
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+
+with ThreadPoolExecutor(max_workers=10) as executor:
+    futures = [executor.submit(clob_client.get_book, token_id) for token_id in token_ids]
+    order_books = [f.result() for f in futures]
+```
+
+**Impact**: Reduce 50-market update from 25s → 5s
+
+### Query Optimization
+
+**Slow Query Example** (full table scan):
+```sql
+SELECT * FROM bonds WHERE status = 'active' AND tier = 1;
+```
+
+**Optimized** (compound index):
+```sql
+CREATE INDEX idx_bonds_status_tier ON bonds (status, tier);
+```
+
+**Candidate Generation** (vector + filters):
+```sql
+-- Use HNSW index first, then apply filters
+SELECT id, 1 - (text_embedding <=> $1) AS similarity
+FROM markets
+WHERE platform = 'polymarket'
+  AND close_time > NOW()
+ORDER BY text_embedding <=> $1
+LIMIT 50;
+```
+
+### Monitoring Query Performance
+
+```sql
+-- Enable slow query logging
+ALTER SYSTEM SET log_min_duration_statement = 100;  -- Log queries >100ms
+
+-- View slow queries
+SELECT query, calls, mean_exec_time
+FROM pg_stat_statements
+WHERE mean_exec_time > 100
+ORDER BY mean_exec_time DESC
+LIMIT 10;
+```
 
 ---
 
